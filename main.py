@@ -74,6 +74,60 @@ def resolve_input_file_path(raw_path: str) -> Optional[Path]:
     return None
 
 
+def extract_file_path_from_text(raw_text: str) -> Optional[Path]:
+    """
+    从自然语言混合输入（如 '存下来D:\\协议文档\\AIW' 或 '帮我把 D:\\xx.docx 归档'）中
+    使用高精度正则表达式剥离提取潜在文件路径，并在磁盘上进行真实实体校验。
+    
+    提取规则（耗时 < 1ms，纯本地无 LLM 消耗）：
+    1. 首先尝试将整句直接当作路径解析；
+    2. 若不是纯路径，正则扫描 Windows 盘符路径 (如 D:\\xxx 或 D:/xxx)；
+    3. 正则扫描 Linux/WSL 绝对路径 (如 /mnt/d/xxx 或 /home/xxx)；
+    4. 对剥离出的路径候选采用后置清洗与逐词回退，并在磁盘上实时校验；
+    5. 若在磁盘上真实存在对应的 Office 实体文件，则返回 Path；否则返回 None（确保零误杀）。
+    """
+    clean_text = raw_text.strip('\"\' ')
+    if not clean_text:
+        return None
+
+    # 1. 尝试整句直接解析
+    direct_res = resolve_input_file_path(clean_text)
+    if direct_res:
+        return direct_res
+
+    # 2. 从混合长句中正则提取候选路径片段
+    candidates = []
+
+    # 模式 A: 匹配 Windows 盘符路径 (如 D:\xxx 或 D:/xxx)
+    win_pat = re.compile(r'[A-Za-z]:[\\/][^?？\"\'\r\n\t]+')
+    candidates.extend(win_pat.findall(clean_text))
+
+    # 模式 B: 匹配 WSL / Linux 绝对路径 (如 /mnt/d/... 或 /home/...)
+    linux_pat = re.compile(r'/(?:mnt/[a-zA-Z]|home/[^/\s]+)/[^?？\"\'\r\n\t]+')
+    candidates.extend(linux_pat.findall(clean_text))
+
+    # 模式 C: 匹配显式带 .docx / .pptx 扩展名的文件名片段
+    ext_pat = re.compile(r'[^?？\s\"\'\r\n\t]+\.(?:docx|pptx|DOCX|PPTX)')
+    candidates.extend(ext_pat.findall(clean_text))
+
+    # 3. 对每个候选逐词回退清洗并校验是否存在于磁盘
+    trailing_puncts = "。，,！!？? \t\r\n；;"
+    for cand in candidates:
+        cand_clean = cand.rstrip(trailing_puncts)
+        if not cand_clean:
+            continue
+        # 逐词从右侧回退削减，以兼容路径后紧跟修饰词的情形（如: "...Definition(11.3) 谢谢！"）
+        parts = cand_clean.split(' ')
+        while parts:
+            sub_cand = ' '.join(parts).rstrip(trailing_puncts)
+            res = resolve_input_file_path(sub_cand)
+            if res and res.is_file():
+                return res
+            parts.pop()
+
+    return None
+
+
 def print_banner():
     """打印系统欢迎横幅与模式指引"""
     banner_text = (
@@ -281,16 +335,27 @@ def run_interactive_loop(agent: AgentCore):
                 topic = user_input.split(" ", 1)[1]
                 handle_make_ppt(agent, topic)
 
-            # 显式上传归档指令 (如: add <路径>, /add <路径>, 上传 <路径>)
-            elif user_input.startswith(("ingest ", "add ", "上传 ", "/add ")):
+            # 显式上传归档指令 (如: add <路径>, /add <路径>, 上传 <路径>, 存下来 <路径>, 归档 <路径>)
+            elif user_input.startswith(("ingest ", "add ", "上传 ", "/add ", "归档 ", "存入 ", "保存 ")):
                 raw_path = user_input.split(" ", 1)[1]
                 handle_ingest(agent, raw_path)
 
-            # 智能文件路径探测 (自动处理 Windows 盘符、反斜杠、漏输 .docx/.pptx 后缀等)
-            elif (detected_file := resolve_input_file_path(user_input)) is not None:
+            # 智能实体探测与零 LLM 意图分流 (纯存文档 vs 边存边答)
+            elif (detected_file := extract_file_path_from_text(user_input)) is not None:
+                # 剔除抽取出的路径，分析用户在句中是否还伴随有即时提问/分析指令
+                stripped_query = user_input.replace(str(detected_file), "").strip()
+                has_ask_intent = any(k in stripped_query for k in [
+                    "？", "?", "总结", "讲了什么", "概括", "分析", "架构是什么", "介绍", "什么是", "核心内容", "如何", "怎样"
+                ])
+
+                # 无论哪种意图，首先完成文档的入库与向量构建
                 handle_ingest(agent, detected_file)
 
-            # 默认为问答指令
+                # 如果用户在提供文档的同时直接提出了分析要求，入库后紧接着回答问题！
+                if has_ask_intent:
+                    handle_ask(agent, user_input)
+
+            # 默认为已有知识库问答指令
             else:
                 handle_ask(agent, user_input)
 

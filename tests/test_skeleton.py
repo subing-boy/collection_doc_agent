@@ -160,7 +160,7 @@ def run_all_tests():
         print(f"  ✔ 问题重试质量校验与拦截逻辑就绪")
 
         # --- 测试项 5: 逆向生成 Word 报告与 16:9 PPT ---
-        print("\n[测试 5/5] 执行文档与演示文稿逆向生成测试...")
+        print("\n[测试 5/6] 执行文档与演示文稿逆向生成测试...")
         generated_doc = agent.generate_new_doc(topic="架构设计总结报告")
         assert generated_doc.is_file()
         print(f"  ✔ 成功导出 Word 文档: {generated_doc.name} (大小: {generated_doc.stat().st_size} 字节)")
@@ -169,8 +169,24 @@ def run_all_tests():
         assert generated_ppt.is_file()
         print(f"  ✔ 成功导出 16:9 商业 PPT: {generated_ppt.name} (大小: {generated_ppt.stat().st_size} 字节)")
 
+        # --- 测试项 6: 实体探测与口语化意图提取测试 ---
+        print("\n[测试 6/6] 执行长句实体提取与口语化意图探测测试...")
+        from main import extract_file_path_from_text
+        # 用例 A: 中文紧挨路径无空格
+        extracted_a = extract_file_path_from_text(f"存下来{ppt_file}")
+        assert extracted_a is not None and extracted_a.name == ppt_file.name
+        # 用例 B: 带有修饰长句与末尾语气词
+        extracted_b = extract_file_path_from_text(f"帮我把 {doc_file} 归档整理一下，谢谢！")
+        assert extracted_b is not None and extracted_b.name == doc_file.name
+        # 用例 C: 提问防误杀 (句中不含真实实体文件)
+        extracted_c = extract_file_path_from_text("为什么要存下来这个文档？")
+        assert extracted_c is None
+        print("  ✔ 无空格紧挨指令提取正常 (如: 存下来D:\\...)")
+        print("  ✔ 夹带修饰短语长句提取正常 (如: 帮我把 D:\\... 归档整理一下)")
+        print("  ✔ 纯提问语句防误拦截校验正常 (如: 为什么要存下来？ -> 未误杀)")
+
         print("\n" + "=" * 65)
-        print("🎉 恭喜！全部 5 项端到端自检测试均 100% 通过！")
+        print("🎉 恭喜！全部 6 项端到端自检测试均 100% 通过！")
         print("=" * 65)
 
     finally:
