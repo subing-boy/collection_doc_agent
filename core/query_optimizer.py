@@ -25,7 +25,7 @@ class QueryOptimizer:
     问题改写与检索重试管理器
     """
 
-    def __init__(self, score_threshold: float = 0.20) -> None:
+    def __init__(self, score_threshold: float = 0.15) -> None:
         """
         :param score_threshold: 判定检索是否置信的余弦相似度下限阈值
         """

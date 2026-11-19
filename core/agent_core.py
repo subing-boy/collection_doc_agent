@@ -12,6 +12,7 @@
 """
 
 import json
+import re
 import hashlib
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
@@ -202,6 +203,47 @@ class AgentCore:
     # 二、带严格出处的知识溯源问答 (Sourced RAG Q&A)
     # ==========================================================================
 
+    @staticmethod
+    def clean_query_and_extract_keywords(raw_query: str) -> tuple[str, List[str]]:
+        """
+        提问预处理与停用词清洗（纯本地 0 Token 毫秒级）：
+        1. 剥离无实际检索语义的元语言和口语废话（如 '知识库中寻找'、'相关的内容'、'帮我查一下' 等）；
+        2. 提取出英文单词、复合专有名词短语以及核心词汇作为关键词；
+        3. 返回 (清洗后的纯净Query, 提取出的关键词列表)。
+        """
+        STOP_PHRASES = [
+            "在知识库中寻找", "知识库中寻找", "在知识库中查找", "知识库中查找", "在知识库中搜索", "知识库中搜索",
+            "从知识库中查找", "从知识库中寻找", "知识库中", "从知识库中", "在知识库里", "知识库里",
+            "帮我查一下", "帮我查找", "帮我找一下", "帮我搜一下", "帮我看看", "我想了解一下", "我想了解", "我想查询", "我想知道",
+            "请问一下", "请问", "告诉我", "搜一下", "查一下", "找一下", "检索一下",
+            "相关的内容", "相关的内容吗", "相关信息", "相关资料", "相关的", "有关内容", "有关信息",
+            "都有什么", "有哪些", "是什么", "怎么样", "具体定义", "的具体逻辑", "具体逻辑"
+        ]
+        text = raw_query.strip()
+        for p in sorted(STOP_PHRASES, key=len, reverse=True):
+            text = text.replace(p, " ")
+
+        text = re.sub(r"^[的和与中在关于找寻]+", "", text.strip()).strip()
+        text = re.sub(r"[的和与中在关于找寻]+$", "", text).strip()
+        text = re.sub(r"[\s,，。？！?!]+", " ", text).strip()
+
+        keywords: List[str] = []
+        # 提取英文和数字专有名词 (如 ai, chat, l2cap, coc, 0x21)
+        eng_words = re.findall(r"[A-Za-z0-9_#.-]+", raw_query)
+        for w in eng_words:
+            if len(w) >= 2 and w.lower() not in ["in", "to", "of", "and", "or", "the", "is", "for"]:
+                keywords.append(w.lower())
+
+        # 提取连续英文短语 (如 ai chat, l2cap coc)
+        eng_phrases = re.findall(r"[A-Za-z0-9_.-]+(?:\s+[A-Za-z0-9_.-]+)+", raw_query)
+        for ep in eng_phrases:
+            keywords.append(ep.lower())
+
+        clean_q = text if text else raw_query
+        # 去重并保持顺序
+        dedup_keywords = list(dict.fromkeys(keywords))
+        return clean_q, dedup_keywords
+
     def ask(
         self,
         query: str,
@@ -210,7 +252,7 @@ class AgentCore:
         filter_doc_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        针对已有知识库进行带出处问答
+        针对已有知识库进行带出处问答 (采用双路混合检索与提问预处理)
         
         :param query: 用户问题
         :param session_id: 会话标识（用于多轮记忆管理）
@@ -222,16 +264,18 @@ class AgentCore:
         if not clean_query:
             return {"answer": "请输入具体的问题内容。", "sources": []}
 
-        # 1. 记录用户输入到记忆管理器中
+        # 1. 记录原始用户输入到记忆管理器中
         self.memory_manager.add_message(session_id, "user", clean_query)
         self.memory_manager.compress_history(session_id, llm_provider=self.llm)
 
-        # 2. 向量化检索
-        query_vector = self.embedding.embed_text(clean_query)
+        # 2. 提问提纯与双路混合检索 (语义向量 + 关键词加权)
+        clean_text, keywords = self.clean_query_and_extract_keywords(clean_query)
+        query_vector = self.embedding.embed_text(clean_text)
         retrieved_chunks = self.vector_store.search(
             query_vector=query_vector,
             top_k=top_k,
-            filter_doc_id=filter_doc_id
+            filter_doc_id=filter_doc_id,
+            keywords=keywords
         )
 
         # 3. 构造出处标记清晰的参考上下文 (Context)
@@ -321,9 +365,10 @@ class AgentCore:
         :param top_k: 综合参考的切片数量
         :return: 生成的 docx 文件路径
         """
-        # 1. 召回与主题相关的知识资产
-        q_vec = self.embedding.embed_text(topic)
-        chunks = self.vector_store.search(q_vec, top_k=top_k)
+        # 1. 召回与主题相关的知识资产 (混合检索)
+        clean_topic, keywords = self.clean_query_and_extract_keywords(topic)
+        q_vec = self.embedding.embed_text(clean_topic)
+        chunks = self.vector_store.search(q_vec, top_k=top_k, keywords=keywords)
 
         context_materials = "\n\n".join(
             [f"[{c['source_filename']} - {c['location_label']}]:\n{c['content']}" for c in chunks]
@@ -395,9 +440,10 @@ class AgentCore:
         :param top_k: 综合参考的切片数量
         :return: 生成的 pptx 文件路径
         """
-        # 1. 召回与主题相关的切片
-        q_vec = self.embedding.embed_text(topic)
-        chunks = self.vector_store.search(q_vec, top_k=top_k)
+        # 1. 召回与主题相关的切片 (混合检索)
+        clean_topic, keywords = self.clean_query_and_extract_keywords(topic)
+        q_vec = self.embedding.embed_text(clean_topic)
+        chunks = self.vector_store.search(q_vec, top_k=top_k, keywords=keywords)
 
         context_materials = "\n\n".join(
             [f"[{c['source_filename']} - {c['location_label']}]:\n{c['content']}" for c in chunks]

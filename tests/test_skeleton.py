@@ -80,6 +80,12 @@ def create_sample_files(temp_dir: Path) -> tuple[Path, Path]:
 
     doc.add_heading("1.1 记忆管理与滑动窗口", level=2)
     doc.add_paragraph("系统具备记忆压缩管理器，当对话轮数超过阈值时触发摘要降维，保证长会话低开销。")
+
+    doc.add_heading("3. 5.21 AI Chat (0x21) 协议定义", level=1)
+    doc.add_paragraph("AI Chat 核心交互规范与语音通道，包含 AppStartChatReq 等控制指令。")
+
+    doc.add_heading("3.1 3.2 L2CAP COC 传输通道配置", level=2)
+    doc.add_paragraph("L2CAP COC 数据分包机制与 MTU 协商策略，用于高带宽语音流的高效传输。")
     doc.save(str(doc_path))
 
     return ppt_path, doc_path
@@ -216,8 +222,30 @@ def run_all_tests():
         assert any("新增的第二代版本规范" in s["location_label"] or "新增的第二代版本规范" in s["preview"] for s in q_new["sources"])
         print("  ✔ [象限2-版本迭代] 同名内容变更成功触发就地升级，旧切片级联清除，新切片即刻生效")
 
+        # --- 测试项 8: 提问噪音词清洗与双路混合检索精准匹配测试 ---
+        print("\n[测试 8/8] 执行提问噪音词清洗与双路混合检索精准匹配测试...")
+        # 测试 A: 停用词清洗与专有名词提取
+        cq, kws = agent.clean_query_and_extract_keywords("知识库中寻找和ai chat相关的内容")
+        assert cq == "ai chat"
+        assert "ai chat" in kws
+        print("  ✔ 提问噪音剥离与核心关键词提取正常 (知识库中寻找... -> ai chat)")
+
+        # 测试 B: 长句口语提问精准召回核心切片 (Top 1 必须命中 AI Chat)
+        hybrid_res = agent.ask("知识库中寻找和ai chat相关的内容")
+        assert len(hybrid_res["sources"]) > 0
+        top_source = hybrid_res["sources"][0]
+        assert "AI Chat" in top_source["location_label"] or "AI Chat" in top_source["preview"]
+        print(f"  ✔ 混合检索精准将目标专有名词推至 Top 1: [{top_source['location_label']}] (得分: {top_source['score']})")
+
+        # 测试 C: 另一组英文专有名词与中文结合长句测试
+        hybrid_res_coc = agent.ask("帮我查一下L2CAP COC协议的具体数据分包逻辑")
+        assert len(hybrid_res_coc["sources"]) > 0
+        top_coc = hybrid_res_coc["sources"][0]
+        assert "L2CAP COC" in top_coc["location_label"] or "L2CAP COC" in top_coc["preview"]
+        print(f"  ✔ L2CAP COC 专有名词长句精准命中 Top 1: [{top_coc['location_label']}] (得分: {top_coc['score']})")
+
         print("\n" + "=" * 65)
-        print("🎉 恭喜！全部 7 项端到端自检测试均 100% 通过！")
+        print("🎉 恭喜！全部 8 项端到端自检测试均 100% 通过！")
         print("=" * 65)
 
     finally:

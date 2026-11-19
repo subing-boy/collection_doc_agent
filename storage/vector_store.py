@@ -33,13 +33,15 @@ class BaseVectorStore(ABC):
         self,
         query_vector: List[float],
         top_k: int = 4,
-        filter_doc_id: Optional[str] = None
+        filter_doc_id: Optional[str] = None,
+        keywords: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """
-        根据查询向量检索 Top-K 最相关切片
+        根据查询向量检索 Top-K 最相关切片 (支持关键词精准双路混合检索)
         :param query_vector: 问题的稠密向量
         :param top_k: 召回数量
         :param filter_doc_id: 可选的文档过滤范围（限定在某文档内查找）
+        :param keywords: 可选的核心关键词列表（用于倒排精确命中加权）
         :return: 包含相似度得分与溯源信息的切片列表
         """
         pass
@@ -106,15 +108,20 @@ class EmbeddedVectorStore(BaseVectorStore):
         self,
         query_vector: List[float],
         top_k: int = 4,
-        filter_doc_id: Optional[str] = None
+        filter_doc_id: Optional[str] = None,
+        keywords: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """
-        执行余弦相似度比对并排序
+        执行双路混合检索：
+        路 1: 语义向量余弦相似度计算 (0.0 ~ 1.0)
+        路 2: 核心关键词/专有名词精确命中加权 (0.0 ~ 1.0)
+        最终得分: 动态融合两路信号，长句口语下专有名词切片也能精准直达 Top-1
         """
         if not self._cached_chunks:
             self._reload_cache()
 
         scored_results: List[Dict[str, Any]] = []
+        clean_kws = [k.lower().strip() for k in (keywords or []) if k.strip()]
 
         for item in self._cached_chunks:
             # 支持根据 doc_id 过滤
@@ -125,11 +132,34 @@ class EmbeddedVectorStore(BaseVectorStore):
             if not item_vec:
                 continue
 
-            similarity = BaseEmbeddingProvider.cosine_similarity(query_vector, item_vec)
+            # 1. 语义向量相似度 (归一化至 0.0 ~ 1.0)
+            v_similarity = max(0.0, BaseEmbeddingProvider.cosine_similarity(query_vector, item_vec))
+
+            # 2. 关键词精准命中打分
+            kw_score = 0.0
+            if clean_kws:
+                loc_lower = item.get("location_label", "").lower()
+                content_lower = item.get("content", "").lower()
+                for kw in clean_kws:
+                    # 标题/章节层级直接命中 (强信号)
+                    if kw in loc_lower:
+                        kw_score += 0.6 if " " in kw else 0.4
+                    # 正文内容命中
+                    if kw in content_lower:
+                        kw_score += 0.4 if " " in kw else 0.25
+                kw_score = min(1.0, kw_score)
+
+            # 3. 动态融合权重 (统一量纲)
+            if clean_kws:
+                final_score = 0.5 * v_similarity + 0.5 * kw_score
+            else:
+                final_score = v_similarity
 
             # 拷贝一份数据并注入得分
             result_item = dict(item)
-            result_item["score"] = round(similarity, 4)
+            result_item["score"] = round(final_score, 4)
+            result_item["vector_similarity"] = round(v_similarity, 4)
+            result_item["keyword_score"] = round(kw_score, 4)
             scored_results.append(result_item)
 
         # 依据得分从高到低排序
