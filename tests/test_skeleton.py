@@ -170,7 +170,7 @@ def run_all_tests():
         print(f"  ✔ 成功导出 16:9 商业 PPT: {generated_ppt.name} (大小: {generated_ppt.stat().st_size} 字节)")
 
         # --- 测试项 6: 实体探测与口语化意图提取测试 ---
-        print("\n[测试 6/6] 执行长句实体提取与口语化意图探测测试...")
+        print("\n[测试 6/7] 执行长句实体提取与口语化意图探测测试...")
         from main import extract_file_path_from_text
         # 用例 A: 中文紧挨路径无空格
         extracted_a = extract_file_path_from_text(f"存下来{ppt_file}")
@@ -185,8 +185,39 @@ def run_all_tests():
         print("  ✔ 夹带修饰短语长句提取正常 (如: 帮我把 D:\\... 归档整理一下)")
         print("  ✔ 纯提问语句防误拦截校验正常 (如: 为什么要存下来？ -> 未误杀)")
 
+        # --- 测试项 7: 四象限防重复入库与版本就地迭代测试 ---
+        print("\n[测试 7/7] 执行四象限防重复入库与版本就地迭代测试...")
+        # 1. 象限 1 测试: 同名且同内容 -> 秒级跳过
+        dup_report = agent.ingest_document(ppt_file)
+        assert dup_report["status"] == "skipped_duplicate"
+        assert dup_report["chunks_count"] == 0
+        print("  ✔ [象限1-完全重复] 同名同内容再次提交已被秒级拦截，切片未冗余增加")
+
+        # 2. 象限 3 测试: 异名但同内容 (改名副本) -> 别名绑定
+        alias_file = sandbox_temp / "个人文档管家架构设计_副本.pptx"
+        shutil.copy2(str(ppt_file), str(alias_file))
+        alias_report = agent.ingest_document(alias_file)
+        assert alias_report["status"] == "aliased_duplicate"
+        assert alias_report["chunks_count"] == 0
+        assert any("别名:个人文档管家架构设计_副本.pptx" in tag for tag in alias_report["tags"])
+        print("  ✔ [象限3-改名副本] 成功识别内容一致并自动建立文件名别名映射，未产生重复切片")
+
+        # 3. 象限 2 测试: 同名但内容修改 -> 版本就地升级
+        mod_doc = docx.Document(str(doc_file))
+        mod_doc.add_heading("2. 新增的第二代版本规范", level=1)
+        mod_doc.add_paragraph("这是同名文件升级后新增的最新核心规范，旧规范切片应被级联清理。")
+        mod_doc.save(str(doc_file))
+
+        update_report = agent.ingest_document(doc_file)
+        assert update_report["status"] == "updated_version"
+        assert update_report["chunks_count"] >= 3
+        # 检查向量库中是否成功检索到了新版本的独有内容
+        q_new = agent.ask("新增的第二代版本规范内容是什么？")
+        assert any("新增的第二代版本规范" in s["location_label"] or "新增的第二代版本规范" in s["preview"] for s in q_new["sources"])
+        print("  ✔ [象限2-版本迭代] 同名内容变更成功触发就地升级，旧切片级联清除，新切片即刻生效")
+
         print("\n" + "=" * 65)
-        print("🎉 恭喜！全部 6 项端到端自检测试均 100% 通过！")
+        print("🎉 恭喜！全部 7 项端到端自检测试均 100% 通过！")
         print("=" * 65)
 
     finally:

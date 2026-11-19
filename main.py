@@ -203,9 +203,56 @@ def handle_ingest(agent: AgentCore, file_path_input: Union[str, Path]):
 
     try:
         report = agent.ingest_document(p)
-        if HAS_RICH:
+        status = report.get("status", "success")
+
+        if status == "skipped_duplicate":
+            # 象限 1: 完全重复提交，秒级跳过
             msg = (
-                f"[bold green]✔ 文档已成功分类归档！[/bold green]\n"
+                f"[bold yellow]⚡ {report['message']}[/bold yellow]\n"
+                f"• 文档名称: [bold]{report['filename']}[/bold]\n"
+                f"• 所属分类: [magenta]{report['category']}[/magenta]\n"
+                f"• 一句话摘要: {report['summary']}\n"
+                f"• 提示: 内容无任何修改，已跳过解析与向量化，防止知识库冗余。"
+            )
+            if HAS_RICH:
+                console.print(Panel(msg, title="防重拦截", border_style="yellow"))
+            else:
+                print(f"⚡ [防重跳过] {report['message']}")
+
+        elif status == "updated_version":
+            # 象限 2: 同名内容变动，版本就地迭代刷新
+            msg = (
+                f"[bold cyan]🔄 {report['message']}[/bold cyan]\n"
+                f"• 文档名称: [bold]{report['filename']}[/bold]\n"
+                f"• 所属分类: [magenta]{report['category']}[/magenta]\n"
+                f"• 新切片数: {report['chunks_count']} 个 (旧版本切片已级联清理)\n"
+                f"• 最新摘要: {report['summary']}\n"
+                f"• 存储路径: [dim]{report['stored_path']}[/dim]"
+            )
+            if HAS_RICH:
+                console.print(Panel(msg, title="版本就地迭代", border_style="cyan"))
+            else:
+                print(f"🔄 [版本刷新] {report['message']}")
+
+        elif status == "aliased_duplicate":
+            # 象限 3: 异名同Hash，改名副本别名绑定
+            msg = (
+                f"[bold magenta]📎 {report['message']}[/bold magenta]\n"
+                f"• 当前提交: [bold]{report['filename']}[/bold]\n"
+                f"• 关联原件: [bold green]{report['original_filename']}[/bold green]\n"
+                f"• 所属分类: [magenta]{report['category']}[/magenta]\n"
+                f"• 当前标签: {report['tags']}\n"
+                f"• 提示: 已将新文件名登记为别名，物理上不生成重复切片。"
+            )
+            if HAS_RICH:
+                console.print(Panel(msg, title="别名映射关联", border_style="magenta"))
+            else:
+                print(f"📎 [别名关联] {report['message']}")
+
+        else:
+            # 象限 4: 全新文件入库
+            msg = (
+                f"[bold green]✔ {report.get('message', '文档已成功分类归档！')}[/bold green]\n"
                 f"• 文档名称: [bold]{report['filename']}[/bold]\n"
                 f"• 归类结果: [magenta]{report['category']}[/magenta]\n"
                 f"• 提炼标签: {report['tags']}\n"
@@ -213,10 +260,11 @@ def handle_ingest(agent: AgentCore, file_path_input: Union[str, Path]):
                 f"• 知识切片数: {report['chunks_count']} 个\n"
                 f"• 物理存储至: [dim]{report['stored_path']}[/dim]"
             )
-            console.print(Panel(msg, title="入库完成", border_style="green"))
-        else:
-            print(f"✔ 归档成功: [{report['category']}] -> {report['stored_path']}")
-            print(f"  切片数: {report['chunks_count']}, 摘要: {report['summary']}")
+            if HAS_RICH:
+                console.print(Panel(msg, title="全新入库完成", border_style="green"))
+            else:
+                print(f"✔ 归档成功: [{report['category']}] -> {report['stored_path']}")
+                print(f"  切片数: {report['chunks_count']}, 摘要: {report['summary']}")
     except Exception as e:
         err = f"❌ 归档失败: {e}"
         if HAS_RICH:

@@ -12,6 +12,7 @@
 """
 
 import json
+import hashlib
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
 
@@ -73,25 +74,88 @@ class AgentCore:
     # 一、文档输入与分类存储链路 (Ingestion Pipeline)
     # ==========================================================================
 
+    @staticmethod
+    def calculate_file_sha256(file_path: Path) -> str:
+        """计算文件的 SHA256 哈希值作为内容全局唯一指纹"""
+        hasher = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            while chunk := f.read(65536):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+
     def ingest_document(self, file_path: Union[str, Path]) -> Dict[str, Any]:
         """
         上传并归档一份新的 Office 文档 (PPTX 或 DOCX)
-        
-        执行全流程：
-        1. 寻找匹配的文件解析器并执行精密语义切片；
-        2. 推断文档分类并将其物理迁移归档到对应子目录；
-        3. 元数据入库 SQLite，切片及其向量索引落库向量引擎。
+        内置四象限状态决策引擎 (基于内容 SHA256 指纹 + 原始文件名)：
+        - 象限 1 (同名同Hash): 完全重复提交，秒级跳过，避免无谓重算；
+        - 象限 2 (同名异Hash): 版本迭代更新，级联清理该文件旧切片并就地刷新落库；
+        - 象限 3 (异名同Hash): 识别为改名副本，绑定文件名别名，避免向量空间切片污染；
+        - 象限 4 (异名异Hash): 全新文档标准入库。
         
         :param file_path: 本地文件路径
-        :return: 归档结果报告（含 doc_id, category, stored_path, 切片数等）
+        :return: 归档结果报告（含 status, doc_id, category, message 等）
         """
         path = Path(file_path).resolve()
         if not path.is_file():
             raise FileNotFoundError(f"传入的路径并非有效文件: {path}")
 
-        # 1. 选择解析器并执行切片
+        file_hash = self.calculate_file_sha256(path)
+        filename = path.name
+
+        # 查询数据库中是否已存在相同内容 Hash 或同名记录
+        existing_by_hash = self.metadata_db.get_document_by_hash(file_hash)
+        existing_by_name = self.metadata_db.get_document_by_filename(filename)
+
+        # ----------------------------------------------------------------------
+        # 象限 1: 同名且同内容 Hash (完全重复提交)
+        # ----------------------------------------------------------------------
+        if existing_by_name and existing_by_name.get("file_hash") == file_hash:
+            return {
+                "status": "skipped_duplicate",
+                "doc_id": existing_by_name["doc_id"],
+                "filename": filename,
+                "category": existing_by_name["category"],
+                "stored_path": existing_by_name["stored_path"],
+                "summary": existing_by_name["summary"],
+                "tags": existing_by_name["tags"],
+                "chunks_count": 0,
+                "message": f"文档【{filename}】在知识库中已存在且内容未改动，已跳过重复入库。"
+            }
+
+        # ----------------------------------------------------------------------
+        # 象限 3: 改名副本 (内容 Hash 相同，但当前提交的文件名不同)
+        # ----------------------------------------------------------------------
+        if existing_by_hash and existing_by_hash["original_filename"] != filename:
+            # 追加文件名别名映射标签，物理上不重复切片，保护向量空间纯净
+            self.metadata_db.add_document_alias(existing_by_hash["doc_id"], filename)
+            updated_doc = self.metadata_db.get_document_by_id(existing_by_hash["doc_id"])
+            return {
+                "status": "aliased_duplicate",
+                "doc_id": existing_by_hash["doc_id"],
+                "filename": filename,
+                "original_filename": existing_by_hash["original_filename"],
+                "category": existing_by_hash["category"],
+                "stored_path": existing_by_hash["stored_path"],
+                "summary": existing_by_hash["summary"],
+                "tags": updated_doc["tags"] if updated_doc else existing_by_hash["tags"],
+                "chunks_count": 0,
+                "message": f"该文档内容与已有文档【{existing_by_hash['original_filename']}】完全一致，已自动建立文件名别名映射，无需重复入库！"
+            }
+
+        # ----------------------------------------------------------------------
+        # 象限 2: 同名但内容 Hash 变动 (就地版本迭代更新)
+        # 象限 4: 全新文件 (异名且异Hash)
+        # ----------------------------------------------------------------------
+        is_version_update = bool(existing_by_name and existing_by_name.get("file_hash") != file_hash)
+        target_doc_id = existing_by_name["doc_id"] if is_version_update else None
+
+        # 1. 选择解析器并执行切片 (若为就地版本更新，复用原 doc_id 保持身份连续)
         parser = get_parser_for_file(path)
-        parsed_doc = parser.parse(path)
+        parsed_doc = parser.parse(path, doc_id=target_doc_id)
+
+        # 若为就地版本更新：首先清除该文档在 SQLite 和内存向量索引中的全部旧切片
+        if is_version_update:
+            self.vector_store.delete_doc_chunks(parsed_doc.doc_id)
 
         # 2. 智能分类与物理文件搬运归档
         archive_info = self.classifier.classify_and_archive(
@@ -100,7 +164,7 @@ class AgentCore:
             storage_base_dir=self.storage_dir
         )
 
-        # 3. 保存文档主表元数据
+        # 3. 保存或更新文档主表元数据 (注入 file_hash 指纹)
         self.metadata_db.save_document(
             doc_id=parsed_doc.doc_id,
             original_filename=parsed_doc.filename,
@@ -108,22 +172,30 @@ class AgentCore:
             stored_path=archive_info["stored_path"],
             summary=archive_info["summary"],
             tags=archive_info["tags"],
-            page_count=parsed_doc.total_pages
+            page_count=parsed_doc.total_pages,
+            file_hash=file_hash
         )
 
-        # 4. 批量计算向量并存入向量引擎
+        # 4. 批量计算新切片向量并存入向量引擎
         chunks_data = [chunk.to_dict() for chunk in parsed_doc.chunks]
         self.vector_store.add_chunks(chunks_data)
 
+        status_str = "updated_version" if is_version_update else "success"
+        message_str = (
+            f"检测到文档【{filename}】存在内容更新，已自动刷新知识切片与向量索引至最新版本！"
+            if is_version_update else "文档已成功完成全新分类归档！"
+        )
+
         return {
-            "status": "success",
+            "status": status_str,
             "doc_id": parsed_doc.doc_id,
             "filename": parsed_doc.filename,
             "category": archive_info["category"],
             "stored_path": archive_info["stored_path"],
             "summary": archive_info["summary"],
             "tags": archive_info["tags"],
-            "chunks_count": len(parsed_doc.chunks)
+            "chunks_count": len(parsed_doc.chunks),
+            "message": message_str
         }
 
     # ==========================================================================

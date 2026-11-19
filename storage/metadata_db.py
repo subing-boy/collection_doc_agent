@@ -88,6 +88,14 @@ class MetadataDB:
                 CREATE INDEX IF NOT EXISTS idx_docs_category 
                 ON documents (category);
             """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_docs_file_hash 
+                ON documents (file_hash);
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_docs_filename 
+                ON documents (original_filename);
+            """)
 
             conn.commit()
 
@@ -190,6 +198,66 @@ class MetadataDB:
             item = dict(row)
             item["tags"] = json.loads(item["tags"]) if item["tags"] else []
             return item
+
+    def get_document_by_hash(self, file_hash: str) -> Optional[Dict[str, Any]]:
+        """
+        根据内容 SHA256 哈希值查询是否已存在相同内容文档 (秒级防重判据)
+        """
+        if not file_hash:
+            return None
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM documents WHERE file_hash = ?", (file_hash,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            item = dict(row)
+            item["tags"] = json.loads(item["tags"]) if item["tags"] else []
+            return item
+
+    def get_document_by_filename(self, filename: str) -> Optional[Dict[str, Any]]:
+        """
+        根据原始文件名查询文档记录 (版本就地迭代判据)
+        """
+        if not filename:
+            return None
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM documents WHERE original_filename = ?", (filename,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            item = dict(row)
+            item["tags"] = json.loads(item["tags"]) if item["tags"] else []
+            return item
+
+    def delete_chunks_by_doc_id(self, doc_id: str) -> int:
+        """
+        根据 doc_id 级联删除旧版本的所有知识切片 (用于版本就地替换更新)
+        :return: 删除的旧切片行数
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM document_chunks WHERE doc_id = ?", (doc_id,))
+            conn.commit()
+            return cursor.rowcount
+
+    def add_document_alias(self, doc_id: str, new_alias: str) -> None:
+        """
+        为已存在的文档追加别名标签 (用于异名同内容副本，避免切片重复膨胀)
+        """
+        doc = self.get_document_by_id(doc_id)
+        if not doc:
+            return
+        tags = doc.get("tags", [])
+        alias_tag = f"别名:{new_alias}"
+        if alias_tag not in tags:
+            tags.append(alias_tag)
+            tags_json = json.dumps(tags, ensure_ascii=False)
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE documents SET tags = ? WHERE doc_id = ?", (tags_json, doc_id))
+                conn.commit()
 
     def get_all_chunks(self) -> List[Dict[str, Any]]:
         """

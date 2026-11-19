@@ -44,6 +44,13 @@ class BaseVectorStore(ABC):
         """
         pass
 
+    @abstractmethod
+    def delete_doc_chunks(self, doc_id: str) -> None:
+        """
+        从存储与内存索引中同步移除指定文档的全部旧切片
+        """
+        pass
+
 
 class EmbeddedVectorStore(BaseVectorStore):
     """
@@ -86,6 +93,13 @@ class EmbeddedVectorStore(BaseVectorStore):
         self.db.save_chunks(chunks)
 
         # 刷新内存缓存
+        self._reload_cache()
+
+    def delete_doc_chunks(self, doc_id: str) -> None:
+        """
+        从 SQLite 与内存向量索引中级联清除指定文档的全部旧切片
+        """
+        self.db.delete_chunks_by_doc_id(doc_id)
         self._reload_cache()
 
     def search(
