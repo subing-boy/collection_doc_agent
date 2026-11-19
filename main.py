@@ -11,9 +11,10 @@
 """
 
 import sys
+import re
 import argparse
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 # 尝试导入 rich 库实现精美终端排版，若未安装则自动回退
 try:
@@ -28,6 +29,49 @@ except ImportError:
     console = None
 
 from core.agent_core import AgentCore
+
+
+def resolve_input_file_path(raw_path: str) -> Optional[Path]:
+    """
+    智能解析并归一化用户输入的文件路径：
+    1. 支持 Windows 反斜杠与盘符自动转换 (如 D:\\xxx -> /mnt/d/xxx, C:\\xxx -> /mnt/c/xxx)；
+    2. 支持 WSL 跨系统路径 (\\\\wsl.localhost\\Ubuntu-26.04\\home\\...)；
+    3. 支持用户漏输扩展名时，自动在磁盘上探测并补全 .docx 或 .pptx；
+    4. 若成功解析出有效的 Office 文档实体，则返回 Path 对象；否则返回 None。
+    """
+    p_str = raw_path.strip('\"\' ')
+    if not p_str:
+        return None
+
+    # 如果包含明显的自然语言提问特征且不以 office 格式结尾，则不视为路径
+    if any(q in p_str for q in ["？", "?", "为什么", "怎么", "什么", "如何"]) and not p_str.lower().endswith((".docx", ".pptx")):
+        return None
+
+    # 1. 处理 \\wsl.localhost\Ubuntu\... 形式的路径
+    if p_str.startswith(("\\\\wsl.localhost\\", "//wsl.localhost/")):
+        match = re.search(r'[/\\\\]home[/\\\\].*', p_str)
+        if match:
+            p_str = match.group(0).replace('\\', '/')
+
+    # 2. 处理 Windows 盘符 D:\ -> /mnt/d/
+    if re.match(r'^[A-Za-z]:', p_str):
+        drive = p_str[0].lower()
+        rest = p_str[2:].replace('\\', '/').lstrip('/')
+        p_str = f'/mnt/{drive}/{rest}'
+    else:
+        p_str = p_str.replace('\\', '/')
+
+    target = Path(p_str).resolve()
+    if target.is_file() and target.suffix.lower() in [".docx", ".pptx"]:
+        return target
+
+    # 3. 如果用户漏输了扩展名，在磁盘上尝试自动探测补全 .docx 或 .pptx
+    for ext in [".docx", ".pptx", ".DOCX", ".PPTX"]:
+        candidate = Path(f"{p_str}{ext}").resolve()
+        if candidate.is_file():
+            return candidate
+
+    return None
 
 
 def print_banner():
@@ -79,11 +123,19 @@ def show_documents_table(agent: AgentCore):
         print("---------------------------------\n")
 
 
-def handle_ingest(agent: AgentCore, file_path_str: str):
+def handle_ingest(agent: AgentCore, file_path_input: Union[str, Path]):
     """处理文档上传与分类存储"""
-    p = Path(file_path_str.strip('"\'')).resolve()
+    if isinstance(file_path_input, Path):
+        p = file_path_input
+    else:
+        resolved = resolve_input_file_path(file_path_input)
+        p = resolved if resolved else Path(file_path_input.strip('"\'')).resolve()
+
     if not p.is_file():
-        err = f"❌ 文件不存在: {p}"
+        err = (
+            f"❌ 文件不存在或无法访问: {file_path_input}\n"
+            f"提示: 如果是 Windows 路径 (如 D:\\文档\\xxx.docx)，系统会自动转为 WSL 路径 (/mnt/d/...)，请确认文件名或扩展名是否准确。"
+        )
         if HAS_RICH:
             console.print(f"[bold red]{err}[/bold red]")
         else:
@@ -229,9 +281,14 @@ def run_interactive_loop(agent: AgentCore):
                 topic = user_input.split(" ", 1)[1]
                 handle_make_ppt(agent, topic)
 
-            # 自动识别是否为文件路径输入
-            elif user_input.lower().endswith((".pptx", ".docx")) or Path(user_input.strip('"\'')).is_file():
-                handle_ingest(agent, user_input)
+            # 显式上传归档指令 (如: add <路径>, /add <路径>, 上传 <路径>)
+            elif user_input.startswith(("ingest ", "add ", "上传 ", "/add ")):
+                raw_path = user_input.split(" ", 1)[1]
+                handle_ingest(agent, raw_path)
+
+            # 智能文件路径探测 (自动处理 Windows 盘符、反斜杠、漏输 .docx/.pptx 后缀等)
+            elif (detected_file := resolve_input_file_path(user_input)) is not None:
+                handle_ingest(agent, detected_file)
 
             # 默认为问答指令
             else:
