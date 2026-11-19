@@ -39,7 +39,9 @@ class AgentCore:
         llm_provider: Optional[BaseLLMProvider] = None,
         embedding_provider: Optional[BaseEmbeddingProvider] = None,
         vector_store: Optional[BaseVectorStore] = None,
-        metadata_db: Optional[MetadataDB] = None
+        metadata_db: Optional[MetadataDB] = None,
+        storage_dir: Optional[Path] = None,
+        output_dir: Optional[Path] = None
     ) -> None:
         """
         初始化 Agent 核心组件
@@ -49,6 +51,8 @@ class AgentCore:
         self.metadata_db = metadata_db or MetadataDB()
         self.llm = llm_provider or get_llm_provider()
         self.embedding = embedding_provider or get_embedding_provider()
+        self.storage_dir = storage_dir or config.STORAGE_DIR
+        self.output_dir = output_dir or config.OUTPUT_DIR
         
         # 2. 向量检索存储引擎
         self.vector_store = vector_store or EmbeddedVectorStore(
@@ -58,8 +62,8 @@ class AgentCore:
 
         # 3. 业务功能模块
         self.classifier = DocumentClassifier(llm_provider=self.llm)
-        self.doc_generator = DocGenerator()
-        self.ppt_generator = PPTGenerator()
+        self.doc_generator = DocGenerator(output_dir=self.output_dir)
+        self.ppt_generator = PPTGenerator(output_dir=self.output_dir)
         
         # 4. 增强机制模块（首版骨架）
         self.memory_manager = MemoryManager()
@@ -93,7 +97,7 @@ class AgentCore:
         archive_info = self.classifier.classify_and_archive(
             source_file=path,
             parsed_doc=parsed_doc,
-            storage_base_dir=config.STORAGE_DIR
+            storage_base_dir=self.storage_dir
         )
 
         # 3. 保存文档主表元数据
