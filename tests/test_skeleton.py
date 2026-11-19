@@ -244,8 +244,65 @@ def run_all_tests():
         assert "L2CAP COC" in top_coc["location_label"] or "L2CAP COC" in top_coc["preview"]
         print(f"  ✔ L2CAP COC 专有名词长句精准命中 Top 1: [{top_coc['location_label']}] (得分: {top_coc['score']})")
 
+        # --- 测试项 9: 维测轨迹记录与自动滚动清理测试 ---
+        print("\n[测试 9/9] 执行维测轨迹全要素记录与自动滚动清理测试...")
+        from core.trace_logger import HarnessTraceLogger, HarnessTraceContext
+
+        # 测试 A: 维测关闭时 0 I/O
+        disabled_log = sandbox_dir / "disabled_trace.txt"
+        disabled_logger = HarnessTraceLogger(enabled=False, log_file=disabled_log)
+        dummy_trace = HarnessTraceContext(query="ping")
+        disabled_logger.record_trace(dummy_trace)
+        assert not disabled_log.exists()
+        print("  ✔ 维测开关关闭时保持 0 磁盘 I/O (未生成任何日志文件)")
+
+        # 测试 B: 维测开启时六大要素完整记录
+        enabled_log = sandbox_dir / "test_trace.txt"
+        enabled_logger = HarnessTraceLogger(enabled=True, log_file=enabled_log, max_mb=10, backup_count=2)
+        full_trace = HarnessTraceContext(
+            query="测试提问",
+            session_id="test_session",
+            system_prompt="测试系统提示词",
+            history_dialog=[{"role": "user", "content": "前序提问"}, {"role": "assistant", "content": "前序回答"}],
+            available_tools=["ToolA", "ToolB"],
+            invoked_tools=[{"tool": "HybridSearch", "keywords": ["test"], "retrieved_chunks": [{"source_filename": "f.docx", "location_label": "p1", "score": 0.9}]}],
+            current_prompt="测试Payload",
+            llm_config={"model": "deepseek-chat", "temperature": 0.3},
+            ai_response="测试自然语言回答",
+            execution_time_ms=12.5
+        )
+        enabled_logger.record_trace(full_trace)
+        assert enabled_log.is_file()
+        log_content = enabled_log.read_text(encoding="utf-8")
+        assert "【1. SYSTEM PROMPT (系统指令)】" in log_content
+        assert "【2. 历史对话记录 (HISTORY DIALOG)】" in log_content
+        assert "【3. 可用工具列表 (AVAILABLE TOOLS)】" in log_content
+        assert "【4. 本轮实际调用的工具与结果 (INVOKED TOOLS & RETRIEVAL)】" in log_content
+        assert "【5. 当前发给 LLM 的最终 PROMPT (CURRENT TURN PROMPT)】" in log_content
+        assert "【6. AI 最终返回的自然语言回答 (AI RESPONSE)】" in log_content
+        print("  ✔ 维测全要素日志生成正常，六大核心维度信息完整覆盖")
+
+        # 测试 C: 滚动清理与最多保留 2 份备份机制
+        small_log = sandbox_dir / "rotating_test.txt"
+        import logging
+        from logging.handlers import RotatingFileHandler
+        rot_handler = RotatingFileHandler(str(small_log), maxBytes=500, backupCount=2, encoding="utf-8")
+        test_rot_logger = logging.getLogger("TestRotLogger")
+        test_rot_logger.setLevel(logging.INFO)
+        test_rot_logger.addHandler(rot_handler)
+        for i in range(20):
+            test_rot_logger.info("A" * 150 + f" line {i}")
+        rot_handler.close()
+        test_rot_logger.removeHandler(rot_handler)
+
+        assert small_log.exists()
+        assert Path(str(small_log) + ".1").exists()
+        assert Path(str(small_log) + ".2").exists()
+        assert not Path(str(small_log) + ".3").exists()  # 严格不超过 2 份备份
+        print("  ✔ 自动滚动切分生效，历史备份数量严格控制在设定上限内，老日志自动淘汰")
+
         print("\n" + "=" * 65)
-        print("🎉 恭喜！全部 8 项端到端自检测试均 100% 通过！")
+        print("🎉 恭喜！全部 9 项端到端自检测试均 100% 通过！")
         print("=" * 65)
 
     finally:

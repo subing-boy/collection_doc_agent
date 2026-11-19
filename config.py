@@ -100,3 +100,20 @@ DEFAULT_RETRIEVAL_TOP_K = 4
 
 # SQLite 数据库文件绝对路径
 SQLITE_DB_PATH = DB_DIR / "agent_metadata.db"
+
+
+# ==============================================================================
+# 5. 维测日志与可观测性配置 (Observability & Trace Logger)
+# ==============================================================================
+
+# 是否开启 Harness ⇄ LLM 深度维测轨迹记录 (默认 False)
+AGENT_DEBUG = os.getenv("AGENT_DEBUG", "false").lower() in ("true", "1", "yes")
+
+# 维测日志输出文件路径 (默认输出到项目根目录下的 agent_debug.txt)
+AGENT_DEBUG_FILE = Path(os.getenv("AGENT_DEBUG_FILE", PROJECT_ROOT / "agent_debug.txt"))
+
+# 单个日志文件上限大小 (单位: MB，默认 10MB)
+AGENT_DEBUG_MAX_MB = int(os.getenv("AGENT_DEBUG_MAX_MB", "10"))
+
+# 滚动日志历史备份最大保留份数 (默认保留 2 份: agent_debug.txt.1, agent_debug.txt.2)
+AGENT_DEBUG_BACKUP_COUNT = int(os.getenv("AGENT_DEBUG_BACKUP_COUNT", "2"))

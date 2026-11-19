@@ -13,6 +13,7 @@
 
 import json
 import re
+import time
 import hashlib
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
@@ -27,6 +28,7 @@ from parsers import get_parser_for_file
 from core.classifier import DocumentClassifier
 from core.memory_manager import MemoryManager
 from core.query_optimizer import QueryOptimizer
+from core.trace_logger import HarnessTraceLogger, HarnessTraceContext
 from generators.doc_generator import DocGenerator
 from generators.ppt_generator import PPTGenerator
 
@@ -43,7 +45,8 @@ class AgentCore:
         vector_store: Optional[BaseVectorStore] = None,
         metadata_db: Optional[MetadataDB] = None,
         storage_dir: Optional[Path] = None,
-        output_dir: Optional[Path] = None
+        output_dir: Optional[Path] = None,
+        trace_logger: Optional[HarnessTraceLogger] = None
     ) -> None:
         """
         初始化 Agent 核心组件
@@ -55,6 +58,7 @@ class AgentCore:
         self.embedding = embedding_provider or get_embedding_provider()
         self.storage_dir = storage_dir or config.STORAGE_DIR
         self.output_dir = output_dir or config.OUTPUT_DIR
+        self.trace_logger = trace_logger or HarnessTraceLogger()
         
         # 2. 向量检索存储引擎
         self.vector_store = vector_store or EmbeddedVectorStore(
@@ -264,6 +268,8 @@ class AgentCore:
         if not clean_query:
             return {"answer": "请输入具体的问题内容。", "sources": []}
 
+        start_time = time.time()
+
         # 1. 记录原始用户输入到记忆管理器中
         self.memory_manager.add_message(session_id, "user", clean_query)
         self.memory_manager.compress_history(session_id, llm_provider=self.llm)
@@ -337,8 +343,39 @@ class AgentCore:
             # 记录重试钩子（首版仅打桩预留）
             pass
 
-        # 8. 记录助手回答并返回
+        # 8. 记录助手回答
         self.memory_manager.add_message(session_id, "assistant", answer)
+
+        elapsed_ms = (time.time() - start_time) * 1000.0
+
+        # 9. 维测打点记录：结构化记录 Harness ⇄ LLM 交互轨迹 (仅当 AGENT_DEBUG 开启时生效)
+        trace_ctx = HarnessTraceContext(
+            query=clean_query,
+            session_id=session_id,
+            system_prompt=system_instruction,
+            history_dialog=history_msgs[:-1] if len(history_msgs) > 1 else [],
+            available_tools=[
+                "DocumentIngest (文档精密解析与分类归档)",
+                "HybridSearch (提问预处理与关键词+向量双路混合检索)",
+                "MakeDoc (专业结构化 Word 报表导出)",
+                "MakePPT (16:9 现代商业版式幻灯片导出)"
+            ],
+            invoked_tools=[{
+                "tool": "HybridSearch",
+                "keywords": keywords,
+                "top_k": top_k,
+                "retrieved_chunks": sources_meta
+            }],
+            current_prompt=current_turn_prompt,
+            llm_config={
+                "provider": config.DEFAULT_LLM_PROVIDER,
+                "model": config.DEEPSEEK_MODEL,
+                "temperature": 0.3
+            },
+            ai_response=answer,
+            execution_time_ms=elapsed_ms
+        )
+        self.trace_logger.record_trace(trace_ctx)
 
         return {
             "query": clean_query,

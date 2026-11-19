@@ -13,6 +13,7 @@ ENV/
 # 环境变量与敏感配置 (绝不提交密钥)
 .env
 *.env.local
+agent_debug.txt*
 
 # 本地数据目录 (排除数据库文件与测试产物，但保留基础目录结构)
 data/db/*.db
