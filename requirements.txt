@@ -5,6 +5,8 @@
 # --- 核心文档处理与 Office 解析生成 ---
 python-pptx>=1.0.0      # 用于 PPTX 幻灯片的读取解析（页码、标题、正文、表格、备注）与逆向生成
 python-docx>=1.1.0      # 用于 DOCX 格式文档的章节解析与排版导出
+openpyxl>=3.1.0         # 用于 Excel 表格 (.xlsx) 的多工作表及带表头矩阵切片
+extract-msg>=0.48.0     # 用于 Outlook 邮件 (.msg) 的元数据与通信内容抽取
 
 # --- 网络请求与大模型 API 交互 ---
 requests>=2.31.0        # 用于调用 DeepSeek API 及其他兼容 OpenAI 的大模型 HTTP 接口

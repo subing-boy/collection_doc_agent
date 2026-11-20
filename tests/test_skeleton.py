@@ -301,8 +301,59 @@ def run_all_tests():
         assert not Path(str(small_log) + ".3").exists()  # 严格不超过 2 份备份
         print("  ✔ 自动滚动切分生效，历史备份数量严格控制在设定上限内，老日志自动淘汰")
 
+        # --- 测试项 10: Excel 表格与 Outlook 邮件多格式入库与精准溯源测试 ---
+        print("\n[测试 10/10] 执行 Excel 表格与 Outlook 邮件多格式入库与溯源测试...")
+        import openpyxl
+        from unittest.mock import MagicMock, patch
+
+        # 1. 动态生成测试用 Excel 文件
+        excel_path = sandbox_temp / "2026年研发项目预算表.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "成本明细表"
+        ws.append(["项目名称", "负责人", "预算额度", "关键指标"])
+        ws.append(["文档管家Agent", "张三", "50万", "带出处RAG溯源"])
+        ws.append(["音视频传输系统", "李四", "35万", "L2CAP数据分包"])
+        wb.save(str(excel_path))
+
+        excel_report = agent.ingest_document(excel_path)
+        assert excel_report["status"] == "success"
+        assert excel_report["chunks_count"] >= 1
+        print(f"  ✔ Excel 入库成功: 分类为 [{excel_report['category']}], 切片数: {excel_report['chunks_count']}")
+
+        # 提问 Excel 内容，验证出处包含 Sheet 与行号
+        excel_qa = agent.ask("文档管家Agent的预算额度是多少？")
+        assert len(excel_qa["sources"]) > 0
+        top_excel_source = excel_qa["sources"][0]
+        assert "成本明细表" in top_excel_source["location_label"]
+        print(f"  ✔ Excel 问答精准溯源至工作表与行号: [{top_excel_source['location_label']}] (得分: {top_excel_source['score']})")
+
+        # 2. 动态生成测试用 MSG 邮件并模拟解析
+        msg_path = sandbox_temp / "关于AIW协议终审的决议.msg"
+        msg_path.touch()
+
+        mock_email = MagicMock()
+        mock_email.subject = "关于AIW协议终审的决议"
+        mock_email.sender = "王总 <wang@company.com>"
+        mock_email.to = "项目组全体"
+        mock_email.date = "2026-11-18 10:00:00"
+        mock_email.body = "经评审委员会讨论，正式确认AIW 11.3协议基线标准通过。"
+
+        with patch("extract_msg.Message", return_value=mock_email):
+            msg_report = agent.ingest_document(msg_path)
+            assert msg_report["status"] == "success"
+            assert msg_report["chunks_count"] >= 1
+            print(f"  ✔ MSG 邮件入库成功: 分类为 [{msg_report['category']}], 切片数: {msg_report['chunks_count']}")
+
+            # 提问邮件决议内容，验证出处包含发件人与时间
+            msg_qa = agent.ask("王总对AIW协议终审的决议内容是什么？")
+            assert len(msg_qa["sources"]) > 0
+            top_msg_source = msg_qa["sources"][0]
+            assert "王总" in top_msg_source["location_label"]
+            print(f"  ✔ 邮件问答精准溯源至发件人与通信时间: [{top_msg_source['location_label']}] (得分: {top_msg_source['score']})")
+
         print("\n" + "=" * 65)
-        print("🎉 恭喜！全部 9 项端到端自检测试均 100% 通过！")
+        print("🎉 恭喜！全部 10 项端到端自检测试均 100% 通过！")
         print("=" * 65)
 
     finally:

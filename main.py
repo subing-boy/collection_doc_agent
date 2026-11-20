@@ -43,8 +43,10 @@ def resolve_input_file_path(raw_path: str) -> Optional[Path]:
     if not p_str:
         return None
 
-    # 如果包含明显的自然语言提问特征且不以 office 格式结尾，则不视为路径
-    if any(q in p_str for q in ["？", "?", "为什么", "怎么", "什么", "如何"]) and not p_str.lower().endswith((".docx", ".pptx")):
+    SUPPORTED_EXTS = [".docx", ".pptx", ".xlsx", ".msg"]
+
+    # 如果包含明显的自然语言提问特征且不以支持格式结尾，则不视为路径
+    if any(q in p_str for q in ["？", "?", "为什么", "怎么", "什么", "如何"]) and not any(p_str.lower().endswith(ext) for ext in SUPPORTED_EXTS):
         return None
 
     # 1. 处理 \\wsl.localhost\Ubuntu\... 形式的路径
@@ -62,11 +64,11 @@ def resolve_input_file_path(raw_path: str) -> Optional[Path]:
         p_str = p_str.replace('\\', '/')
 
     target = Path(p_str).resolve()
-    if target.is_file() and target.suffix.lower() in [".docx", ".pptx"]:
+    if target.is_file() and target.suffix.lower() in SUPPORTED_EXTS:
         return target
 
-    # 3. 如果用户漏输了扩展名，在磁盘上尝试自动探测补全 .docx 或 .pptx
-    for ext in [".docx", ".pptx", ".DOCX", ".PPTX"]:
+    # 3. 如果用户漏输了扩展名，在磁盘上尝试自动探测补全支持的后缀
+    for ext in [".docx", ".pptx", ".xlsx", ".msg", ".DOCX", ".PPTX", ".XLSX", ".MSG"]:
         candidate = Path(f"{p_str}{ext}").resolve()
         if candidate.is_file():
             return candidate
@@ -106,8 +108,8 @@ def extract_file_path_from_text(raw_text: str) -> Optional[Path]:
     linux_pat = re.compile(r'/(?:mnt/[a-zA-Z]|home/[^/\s]+)/[^?？\"\'\r\n\t]+')
     candidates.extend(linux_pat.findall(clean_text))
 
-    # 模式 C: 匹配显式带 .docx / .pptx 扩展名的文件名片段
-    ext_pat = re.compile(r'[^?？\s\"\'\r\n\t]+\.(?:docx|pptx|DOCX|PPTX)')
+    # 模式 C: 匹配显式带支持扩展名的文件名片段
+    ext_pat = re.compile(r'[^?？\s\"\'\r\n\t]+\.(?:docx|pptx|xlsx|msg|DOCX|PPTX|XLSX|MSG)')
     candidates.extend(ext_pat.findall(clean_text))
 
     # 3. 对每个候选逐词回退清洗并校验是否存在于磁盘
