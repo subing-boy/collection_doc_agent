@@ -383,8 +383,35 @@ def run_all_tests():
         assert "1.1 摄像头与传感器通道" in top_md_source["location_label"]
         print(f"  ✔ Markdown 问答精准溯源至章节面包屑: [{top_md_source['location_label']}] (得分: {top_md_source['score']})")
 
+        # --- 测试项 12: 自定义 PPT Prompt 读取、口语化生成意图与自定义目录导出测试 ---
+        print("\n[测试 12/12] 执行自定义 PPT Prompt 读取、口语化生成意图与自定义目录导出测试...")
+        from main import extract_generation_intent_and_target_dir
+
+        # 1. 验证口语化长句意图与 Windows 盘符目标路径抽取
+        test_long_prompt = r"总结一下live mode device + ca + ai 的主要内容包括流程 生成ppt到D:\download路径下"
+        extracted = extract_generation_intent_and_target_dir(test_long_prompt)
+        assert extracted is not None
+        act_type, extracted_topic, target_dest = extracted
+        assert act_type == "ppt"
+        assert "live mode device" in extracted_topic
+        assert target_dest == Path("/mnt/d/download")
+        print(f"  ✔ 口语化制作 PPT 意图与保存目录抽取正常: 主题=[{extracted_topic}], 目标目录=[{target_dest}]")
+
+        # 2. 验证自定义目标目录导出
+        sandbox_custom_out = sandbox_dir / "custom_download"
+        custom_ppt_file = agent.generate_new_ppt("智能眼镜LiveMode架构汇报", output_dir=sandbox_custom_out)
+        assert custom_ppt_file.exists()
+        assert custom_ppt_file.parent == sandbox_custom_out
+        print(f"  ✔ 成功将 PPT 直接导出到用户指定的自定义目录: {custom_ppt_file}")
+
+        # 3. 验证动态 Prompt 模板读取机制
+        rendered_prompt = agent._load_ppt_prompt("测试主题", "参考切片内容")
+        assert "【参考资料】" in rendered_prompt
+        assert "测试主题" in rendered_prompt
+        print("  ✔ 自定义 PPT Prompt 模板热加载与动态占位符替换机制正常")
+
         print("\n" + "=" * 65)
-        print("🎉 恭喜！全部 11 项端到端自检测试均 100% 通过！")
+        print("🎉 恭喜！全部 12 项端到端自检测试均 100% 通过！")
         print("=" * 65)
 
     finally:

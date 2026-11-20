@@ -392,6 +392,7 @@ class AgentCore:
         self,
         topic: str,
         output_filename: Optional[str] = None,
+        output_dir: Optional[Path] = None,
         top_k: int = 6
     ) -> Path:
         """
@@ -399,6 +400,7 @@ class AgentCore:
         
         :param topic: 报告主题或用户指令 (如: "总结知识库中所有关于数据同步架构的内容")
         :param output_filename: 指定输出文件名 (可选)
+        :param output_dir: 指定目标输出目录 (可选)
         :param top_k: 综合参考的切片数量
         :return: 生成的 docx 文件路径
         """
@@ -460,23 +462,28 @@ class AgentCore:
         return self.doc_generator.generate_document(
             title=doc_title,
             sections=sections,
-            output_filename=output_filename
+            output_filename=output_filename,
+            output_dir=output_dir
         )
 
     def generate_new_ppt(
         self,
         topic: str,
         output_filename: Optional[str] = None,
+        output_dir: Optional[Path] = None,
         top_k: int = 6
     ) -> Path:
         """
-        根据知识库资料，综合提炼并生成一份现代 16:9 商业宽屏演示文稿 (.pptx)
+        根据知识库资料与用户自定义编辑的 Prompt 模板，综合提炼并生成一份现代 16:9 商业宽屏演示文稿 (.pptx)
         
         :param topic: 演示主题
         :param output_filename: 指定输出文件名 (可选)
+        :param output_dir: 指定目标输出目录 (可选，如 D:\\download)
         :param top_k: 综合参考的切片数量
-        :return: 生成的 pptx 文件路径
+        :return: 生成的 pptx 文件绝对路径
         """
+        start_time = time.time()
+
         # 1. 召回与主题相关的切片 (混合检索)
         clean_topic, keywords = self.clean_query_and_extract_keywords(topic)
         q_vec = self.embedding.embed_text(clean_topic)
@@ -486,46 +493,12 @@ class AgentCore:
             [f"[{c['source_filename']} - {c['location_label']}]:\n{c['content']}" for c in chunks]
         )
 
-        # 2. 引导大模型输出幻灯片卡片阵列 JSON
-        prompt = f"""请针对主题：“{topic}”，综合以下参考文档资料，规划并撰写一份现代 16:9 商业汇报演示文稿的内容。
+        # 2. 动态读取用户可编辑的 PPT 生成 Prompt 模板文件
+        prompt = self._load_ppt_prompt(topic=topic, context_materials=context_materials)
 
-【参考资料】:
-{context_materials}
-
-【输出格式要求】:
-必须返回一个合法标准的 JSON 对象，格式定义如下:
-{{
-    "deck_title": "演示文稿大标题",
-    "deck_subtitle": "一句话副标题或业务背景",
-    "slides": [
-        {{
-            "type": "content_cards",
-            "title": "页面核心主题",
-            "takeaway": "核心结论一句话提炼",
-            "cards": [
-                {{
-                    "card_title": "卡片要点1",
-                    "points": ["事实与论据", "支撑数据与出处"]
-                }},
-                {{
-                    "card_title": "卡片要点2",
-                    "points": ["事实与论据", "支撑数据与出处"]
-                }}
-            ]
-        }},
-        {{
-            "type": "summary",
-            "title": "总结与后续行动",
-            "points": [
-                "阶段性总结要点 1",
-                "下一步落地计划 2"
-            ]
-        }}
-    ]
-}}
-"""
+        system_instruction = "你是一位资深演示文稿设计师与技术布道师，擅长将复杂文档转化为结构化卡片 PPT，严格输出 JSON。"
         messages = [
-            {"role": "system", "content": "你是一位资深演示文稿设计师，擅长将复杂文档转化为结构化卡片 PPT，严格输出 JSON。"},
+            {"role": "system", "content": system_instruction},
             {"role": "user", "content": prompt}
         ]
 
@@ -546,13 +519,87 @@ class AgentCore:
             deck_sub = "知识库综合提炼 (骨架模式)"
             slides = self._build_default_ppt_slides(topic, chunks)
 
-        # 3. 调用 PPTGenerator 导出实体文件
-        return self.ppt_generator.generate_presentation(
+        # 3. 调用 PPTGenerator 导出实体文件至目标目录
+        generated_path = self.ppt_generator.generate_presentation(
             deck_title=deck_title,
             deck_subtitle=deck_sub,
             slides_data=slides,
-            output_filename=output_filename
+            output_filename=output_filename,
+            output_dir=output_dir
         )
+
+        # 4. 维测打点记录：记录实际调用的 Prompt 内容与输出结果
+        elapsed_ms = (time.time() - start_time) * 1000.0
+        trace_ctx = HarnessTraceContext(
+            query=f"[生成PPT] {topic}",
+            system_prompt=system_instruction,
+            available_tools=["MakePPT (16:9 现代商业版式幻灯片导出)", "HybridSearch (双路混合检索)"],
+            invoked_tools=[{
+                "tool": "MakePPT",
+                "topic": topic,
+                "output_path": str(generated_path),
+                "retrieved_chunks": [
+                    {"source_filename": c.get("source_filename"), "location_label": c.get("location_label"), "score": c.get("score", 0.0)}
+                    for c in chunks
+                ]
+            }],
+            current_prompt=prompt,
+            llm_config={"model": config.DEEPSEEK_MODEL, "temperature": 0.4, "provider": config.DEFAULT_LLM_PROVIDER},
+            ai_response=f"成功根据自定义 Prompt 生成 16:9 商业 PPT 文件: {generated_path}",
+            execution_time_ms=elapsed_ms
+        )
+        self.trace_logger.record_trace(trace_ctx)
+
+        return generated_path
+
+    @staticmethod
+    def _load_ppt_prompt(topic: str, context_materials: str) -> str:
+        """
+        动态热加载用户可编辑的 PPT Prompt 模板文件
+        若模板文件存在，则读取并替换 {topic} 与 {context_materials}；
+        若不存在或发生异常，安全回退到内置标准提示词。
+        """
+        template_file = config.PPT_PROMPT_TEMPLATE_PATH
+        if template_file.is_file():
+            try:
+                template_str = template_file.read_text(encoding="utf-8")
+                return template_str.format(topic=topic, context_materials=context_materials)
+            except Exception:
+                pass
+
+        return f"""请针对主题：“{topic}”，综合以下参考文档资料，规划并撰写一份现代 16:9 商业汇报演示文稿的内容。
+
+【参考资料】:
+{context_materials}
+
+【输出格式要求】:
+必须返回一个合法标准的 JSON 对象，格式定义如下:
+{{
+    "deck_title": "演示文稿大标题",
+    "deck_subtitle": "一句话副标题或业务背景",
+    "slides": [
+        {{
+            "type": "content_cards",
+            "title": "页面核心主题",
+            "takeaway": "核心结论一句话提炼",
+            "cards": [
+                {{
+                    "card_title": "卡片要点1",
+                    "points": ["事实与论据", "支撑数据与出处"]
+                }}
+            ]
+        }},
+        {{
+            "type": "summary",
+            "title": "总结与后续行动",
+            "points": [
+                "阶段性总结要点 1",
+                "下一步落地计划 2"
+            ]
+        }}
+    ]
+}}
+"""
 
     # ==========================================================================
     # 四、辅助工具与离线降级辅助方法

@@ -48,32 +48,17 @@ class PPTGenerator:
         deck_title: str,
         deck_subtitle: str,
         slides_data: List[Dict[str, Any]],
-        output_filename: Optional[str] = None
+        output_filename: Optional[str] = None,
+        output_dir: Optional[Path] = None
     ) -> Path:
         """
         根据幻灯片数组生成 PPTX 文件
         
         :param deck_title: 演示文稿总标题
         :param deck_subtitle: 副标题或背景说明
-        :param slides_data: 幻灯片内容列表，格式示例:
-            [
-                {
-                    "type": "content_cards",        # 类型: content_cards / summary
-                    "title": "系统架构关键突破",
-                    "takeaway": "核心结论: 采用轻量化本地向量库实现毫秒级溯源",
-                    "cards": [
-                        {
-                            "card_title": "精密切片",
-                            "points": ["PPT 逐页包含演讲者备注", "Word 保留标题层级面包屑"]
-                        },
-                        {
-                            "card_title": "严格溯源",
-                            "points": ["回答强制锁定出处页码", "无依据自动声明未知"]
-                        }
-                    ]
-                }
-            ]
-        :param output_filename: 指定保存文件名
+        :param slides_data: 幻灯片内容列表
+        :param output_filename: 指定保存文件名 (可选)
+        :param output_dir: 指定目标保存目录 (可选，默认使用 self.output_dir)
         :return: 生成的 pptx 绝对路径
         """
         prs = pptx.Presentation()
@@ -105,7 +90,9 @@ class PPTGenerator:
         if not output_filename.endswith(".pptx"):
             output_filename += ".pptx"
 
-        target_path = self.output_dir / output_filename
+        save_dir = Path(output_dir).resolve() if output_dir else self.output_dir
+        save_dir.mkdir(parents=True, exist_ok=True)
+        target_path = save_dir / output_filename
         prs.save(str(target_path))
         return target_path
 

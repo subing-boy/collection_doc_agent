@@ -33,31 +33,16 @@ class DocGenerator:
         self,
         title: str,
         sections: List[Dict[str, Any]],
-        output_filename: Optional[str] = None
+        output_filename: Optional[str] = None,
+        output_dir: Optional[Path] = None
     ) -> Path:
         """
         根据结构化章节数据生成并导出 Word 文档
         
         :param title: 文档主标题
-        :param sections: 章节列表，每个元素格式示例:
-            {
-                "heading": "1. 核心架构概述",
-                "level": 1,                     # 1 表示一级标题，2 表示二级标题
-                "paragraphs": [
-                    "本方案采用基于 RAG 的精准溯源架构...",
-                    "所有文档均经过细粒度切片处理。"
-                ],
-                "bullet_points": [               # 可选要点列表
-                    "支持 PPTX 幻灯片逐页提取",
-                    "支持 DOCX 章节面包屑保留"
-                ],
-                "table_data": [                  # 可选表格数据 (二维列表)
-                    ["模块", "技术选型", "职责"],
-                    ["大模型网关", "DeepSeek API", "提供推理与生成"],
-                    ["向量检索", "Embedded Store", "支持余弦相似度精准匹配"]
-                ]
-            }
+        :param sections: 章节列表
         :param output_filename: 指定导出文件名，如不提供则自动以时间戳命名
+        :param output_dir: 指定保存目录 (可选，默认使用 self.output_dir)
         :return: 生成的 docx 文件绝对路径
         """
         doc = docx.Document()
@@ -138,7 +123,9 @@ class DocGenerator:
         if not output_filename.endswith(".docx"):
             output_filename += ".docx"
 
-        target_path = self.output_dir / output_filename
+        save_dir = Path(output_dir).resolve() if output_dir else self.output_dir
+        save_dir.mkdir(parents=True, exist_ok=True)
+        target_path = save_dir / output_filename
         doc.save(str(target_path))
         return target_path
 
