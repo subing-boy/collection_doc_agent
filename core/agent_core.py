@@ -274,32 +274,17 @@ class AgentCore:
         self.memory_manager.add_message(session_id, "user", clean_query)
         self.memory_manager.compress_history(session_id, llm_provider=self.llm)
 
-        # 2. 提问提纯与双路混合检索 (语义向量 + 关键词加权)
+        # 2. 提问提纯与初始双路混合检索 (语义向量 + 关键词加权)
         clean_text, keywords = self.clean_query_and_extract_keywords(clean_query)
         query_vector = self.embedding.embed_text(clean_text)
-        retrieved_chunks = self.vector_store.search(
+        initial_chunks = self.vector_store.search(
             query_vector=query_vector,
             top_k=top_k,
             filter_doc_id=filter_doc_id,
             keywords=keywords
         )
 
-        # 3. 构造出处标记清晰的参考上下文 (Context)
-        context_blocks = []
-        sources_meta = []
-        for i, c in enumerate(retrieved_chunks, start=1):
-            source_tag = f"【参考材料 {i}】 (来源: {c['source_filename']} | 坐标: {c['location_label']} | 匹配度: {c.get('score', 0):.2f})"
-            context_blocks.append(f"{source_tag}\n{c['content']}")
-            sources_meta.append({
-                "source_filename": c["source_filename"],
-                "location_label": c["location_label"],
-                "score": c.get("score", 0),
-                "preview": c["content"][:120] + "..."
-            })
-
-        context_text = "\n\n" + ("="*60 + "\n").join(context_blocks) if context_blocks else "（无相关资料）"
-
-        # 4. 构建强制溯源系统指令 (System Prompt)
+        # 3. 构建强制溯源系统指令 (System Prompt)
         system_instruction = (
             "你是一个高度专业、严谨求实的个人文档管家知识助手。\n"
             "请基于下方提供的【参考材料】回答用户的问题。\n\n"
@@ -311,44 +296,121 @@ class AgentCore:
             "3. 保持回答条理清晰、层次分明。"
         )
 
-        # 5. 装配大模型调用消息序列
-        messages: List[Dict[str, str]] = [{"role": "system", "content": system_instruction}]
-        
-        # 拼接多轮历史上下文
-        history_msgs = self.memory_manager.get_messages(session_id)
-        if len(history_msgs) > 1:
-            # 加入除本轮 user 外的过去轮次
-            messages.extend(history_msgs[:-1])
+        # ======================================================================
+        # 4. Agent Loop 多轮自主纠错与深度筛查闭环 (最多 4 轮循环，防死循环安全锁)
+        # ======================================================================
+        MAX_AGENT_LOOPS = 4
+        active_chunks: List[Dict[str, Any]] = list(initial_chunks)
+        called_tool_signatures = set()
+        invoked_tools_meta: List[Dict[str, Any]] = [{
+            "tool": "HybridSearch",
+            "keywords": keywords,
+            "top_k": top_k,
+            "retrieved_count": len(initial_chunks)
+        }]
 
-        # 本轮当前问题与检索材料
-        current_turn_prompt = f"【参考材料】:\n{context_text}\n\n【用户提问】: {clean_query}"
-        messages.append({"role": "user", "content": current_turn_prompt})
+        answer = ""
+        current_turn_prompt = ""
+        sources_meta: List[Dict[str, Any]] = []
 
-        # 6. 调用大模型生成回答 (如 API 不可用则提供离线自测响应)
-        if self.llm and self.llm.is_available():
-            try:
-                answer = self.llm.chat_complete(messages, temperature=0.3)
-            except Exception as e:
-                answer = f"【调用大模型发生异常】: {e}"
-        else:
-            # 离线或骨架单测降级呈现
-            answer = (
-                f"【骨架演示模式 - 未配置 DEEPSEEK_API_KEY】\n"
-                f"系统已成功在向量库中召回了 {len(retrieved_chunks)} 个匹配切片！\n"
-                f"配置有效 API Key 后，大模型将在此精准回答并注入出处引用。"
-            )
+        for loop_turn in range(1, MAX_AGENT_LOOPS + 1):
+            # 门禁 1: 检查提问中核心专有名词是否有遗漏
+            missing_terms = self.query_optimizer.check_missing_core_terms(keywords, active_chunks)
 
-        # 7. 检查是否触发重试机制优化插槽
-        if self.query_optimizer.should_trigger_retry(retrieved_chunks, answer):
-            # 记录重试钩子（首版仅打桩预留）
-            pass
+            # 如果检测到关键实体遗漏且尚未达到最大轮次，自主唤醒深度筛查工具
+            if missing_terms and loop_turn < MAX_AGENT_LOOPS:
+                for term in missing_terms:
+                    grep_sig = f"grep:{term}"
+                    if grep_sig not in called_tool_signatures:
+                        called_tool_signatures.add(grep_sig)
+                        grep_results = self.metadata_db.grep_chunks_by_term(term, doc_id=filter_doc_id)
+                        if grep_results:
+                            invoked_tools_meta.append({
+                                "tool": "deep_keyword_grep",
+                                "term": term,
+                                "hit_count": len(grep_results)
+                            })
+                            # 合并新切片并去重
+                            existing_ids = {c.get("chunk_id") for c in active_chunks}
+                            for gh in grep_results[:3]:
+                                if gh.get("chunk_id") not in existing_ids:
+                                    active_chunks.append(gh)
+                                    existing_ids.add(gh.get("chunk_id"))
 
-        # 8. 记录助手回答
+                            # 对首个命中切片执行邻近章节上下文扩展 (保证 Phase 1 / Phase 2 完整性)
+                            top_hit = grep_results[0]
+                            adj_sig = f"adj:{top_hit['doc_id']}:{top_hit['page_or_slide']}"
+                            if adj_sig not in called_tool_signatures:
+                                called_tool_signatures.add(adj_sig)
+                                adj_chunks = self.metadata_db.get_adjacent_chunks(
+                                    doc_id=top_hit["doc_id"],
+                                    page_or_slide=top_hit["page_or_slide"],
+                                    window=1
+                                )
+                                if adj_chunks:
+                                    invoked_tools_meta.append({
+                                        "tool": "expand_adjacent_chunks",
+                                        "source": top_hit["source_filename"],
+                                        "center_page": top_hit["page_or_slide"],
+                                        "expanded_count": len(adj_chunks)
+                                    })
+                                    for ac in adj_chunks:
+                                        if ac.get("chunk_id") not in existing_ids:
+                                            active_chunks.append(ac)
+                                            existing_ids.add(ac.get("chunk_id"))
+                            break
+
+            # 组装本轮参考材料
+            context_blocks = []
+            sources_meta = []
+            for i, c in enumerate(active_chunks, start=1):
+                source_tag = f"【参考材料 {i}】 (来源: {c['source_filename']} | 坐标: {c['location_label']} | 匹配度: {c.get('score', 0):.2f})"
+                context_blocks.append(f"{source_tag}\n{c['content']}")
+                sources_meta.append({
+                    "source_filename": c["source_filename"],
+                    "location_label": c["location_label"],
+                    "score": c.get("score", 0),
+                    "preview": c["content"][:120] + "..."
+                })
+
+            context_text = "\n\n" + ("="*60 + "\n").join(context_blocks) if context_blocks else "（无相关资料）"
+
+            # 组装消息并调用大模型
+            current_turn_prompt = f"【参考材料】:\n{context_text}\n\n【用户提问】: {clean_query}"
+            messages: List[Dict[str, str]] = [{"role": "system", "content": system_instruction}]
+            history_msgs = self.memory_manager.get_messages(session_id)
+            if len(history_msgs) > 1:
+                messages.extend(history_msgs[:-1])
+            messages.append({"role": "user", "content": current_turn_prompt})
+
+            if self.llm and self.llm.is_available():
+                try:
+                    answer = self.llm.chat_complete(messages, temperature=0.3)
+                except Exception as e:
+                    answer = f"【调用大模型发生异常】: {e}"
+            else:
+                answer = (
+                    f"【骨架演示模式 - 未配置 DEEPSEEK_API_KEY】\n"
+                    f"系统已成功在向量库与深度筛查工具中汇总了 {len(active_chunks)} 个高匹配切片！\n"
+                    f"配置有效 API Key 后，大模型将在此精准回答并注入出处引用。"
+                )
+
+            # 门禁 2: 检查大模型是否回答未找到
+            if self.query_optimizer.is_answer_indicating_miss(answer):
+                # 若未找到且未达上限，下一轮继续自愈
+                if loop_turn < MAX_AGENT_LOOPS:
+                    continue
+                else:
+                    break
+            else:
+                # 成功找到有效答案，提前退出 Loop！
+                break
+
+        # 5. 记录助手回答并计算耗时
         self.memory_manager.add_message(session_id, "assistant", answer)
-
         elapsed_ms = (time.time() - start_time) * 1000.0
 
-        # 9. 维测打点记录：结构化记录 Harness ⇄ LLM 交互轨迹 (仅当 AGENT_DEBUG 开启时生效)
+        # 6. 维测打点记录：结构化记录 Harness ⇄ LLM 交互轨迹 (仅当 AGENT_DEBUG 开启时生效)
         trace_ctx = HarnessTraceContext(
             query=clean_query,
             session_id=session_id,
@@ -357,15 +419,12 @@ class AgentCore:
             available_tools=[
                 "DocumentIngest (文档精密解析与分类归档)",
                 "HybridSearch (提问预处理与关键词+向量双路混合检索)",
+                "deep_keyword_grep (全库穿透深度专有名词筛查)",
+                "expand_adjacent_chunks (章节连续上下文扩展)",
                 "MakeDoc (专业结构化 Word 报表导出)",
                 "MakePPT (16:9 现代商业版式幻灯片导出)"
             ],
-            invoked_tools=[{
-                "tool": "HybridSearch",
-                "keywords": keywords,
-                "top_k": top_k,
-                "retrieved_chunks": sources_meta
-            }],
+            invoked_tools=invoked_tools_meta,
             current_prompt=current_turn_prompt,
             llm_config={
                 "provider": config.DEFAULT_LLM_PROVIDER,
@@ -381,7 +440,7 @@ class AgentCore:
             "query": clean_query,
             "answer": answer,
             "sources": sources_meta,
-            "chunks_count": len(retrieved_chunks)
+            "chunks_count": len(active_chunks)
         }
 
     # ==========================================================================

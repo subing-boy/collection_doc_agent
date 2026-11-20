@@ -259,6 +259,77 @@ class MetadataDB:
                 cursor.execute("UPDATE documents SET tags = ? WHERE doc_id = ?", (tags_json, doc_id))
                 conn.commit()
 
+    def grep_chunks_by_term(self, term: str, doc_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        全库穿透深度筛查工具：直接在 SQLite 中检索包含特定专有名词/关键词的切片
+        用于在常规向量相似度不足或核心专有名词被淹没时精准召回
+        :param term: 目标词 (不区分大小写)
+        :param doc_id: 可选的限定文档 ID
+        :return: 命中的切片列表
+        """
+        clean_term = term.strip()
+        if not clean_term:
+            return []
+
+        pattern = f"%{clean_term}%"
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if doc_id:
+                cursor.execute("""
+                    SELECT chunk_id, doc_id, source_filename, chunk_type,
+                           page_or_slide, location_label, content, vector_json
+                    FROM document_chunks
+                    WHERE doc_id = ? AND (content LIKE ? OR location_label LIKE ?)
+                    ORDER BY CASE WHEN location_label LIKE ? THEN 0 ELSE 1 END, page_or_slide ASC
+                """, (doc_id, pattern, pattern, pattern))
+            else:
+                cursor.execute("""
+                    SELECT chunk_id, doc_id, source_filename, chunk_type,
+                           page_or_slide, location_label, content, vector_json
+                    FROM document_chunks
+                    WHERE content LIKE ? OR location_label LIKE ?
+                    ORDER BY CASE WHEN location_label LIKE ? THEN 0 ELSE 1 END, page_or_slide ASC
+                """, (pattern, pattern, pattern))
+
+            rows = cursor.fetchall()
+            results = []
+            for r in rows:
+                item = dict(r)
+                item["vector"] = json.loads(item["vector_json"]) if item.get("vector_json") else []
+                if "vector_json" in item:
+                    del item["vector_json"]
+                results.append(item)
+            return results
+
+    def get_adjacent_chunks(self, doc_id: str, page_or_slide: int, window: int = 1) -> List[Dict[str, Any]]:
+        """
+        获取指定切片前后连续的邻近章节切片 (用于保证编写复杂需求文档时的上下文连贯完整)
+        :param doc_id: 文档 ID
+        :param page_or_slide: 目标切片序号
+        :param window: 前后窗口大小 (默认各取前后 1 块)
+        :return: 连续切片列表
+        """
+        min_seq = max(1, page_or_slide - window)
+        max_seq = page_or_slide + window
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT chunk_id, doc_id, source_filename, chunk_type,
+                       page_or_slide, location_label, content, vector_json
+                FROM document_chunks
+                WHERE doc_id = ? AND page_or_slide BETWEEN ? AND ?
+                ORDER BY page_or_slide ASC
+            """, (doc_id, min_seq, max_seq))
+            rows = cursor.fetchall()
+            results = []
+            for r in rows:
+                item = dict(r)
+                item["vector"] = json.loads(item["vector_json"]) if item.get("vector_json") else []
+                if "vector_json" in item:
+                    del item["vector_json"]
+                results.append(item)
+            return results
+
     def get_all_chunks(self) -> List[Dict[str, Any]]:
         """
         加载所有切片数据（包括其向量表示），供向量检索器载入或构建索引

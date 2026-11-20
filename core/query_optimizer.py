@@ -36,8 +36,41 @@ class QueryOptimizer:
             "根据已有文档库，未找到",
             "资料中未提及",
             "知识库中没有",
-            "现有文档不足以回答"
+            "现有文档不足以回答",
+            "没有找到关于",
+            "未提及具体实现",
+            "文档中未说明"
         ]
+
+    def check_missing_core_terms(
+        self,
+        query_keywords: List[str],
+        retrieved_chunks: List[Dict[str, Any]]
+    ) -> List[str]:
+        """
+        质量门禁：检查用户提问中的核心专有名词是否在召回切片中完全缺失
+        重点关注生僻缩写或核心实体术语 (如 vad, l2cap, coc, mtu 等)
+        :param query_keywords: 用户提问提纯出的关键词列表
+        :param retrieved_chunks: 当前召回的切片集合
+        :return: 在切片中完全未出现的遗漏核心词列表
+        """
+        if not query_keywords or not retrieved_chunks:
+            return [k for k in query_keywords if k.strip()]
+
+        combined_text = " ".join([
+            f"{c.get('location_label', '')} {c.get('content', '')}".lower()
+            for c in retrieved_chunks
+        ])
+
+        missing = []
+        for kw in query_keywords:
+            clean_kw = kw.lower().strip()
+            if not clean_kw:
+                continue
+            if clean_kw not in combined_text:
+                missing.append(clean_kw)
+
+        return missing
 
     def is_retrieval_low_confidence(self, chunks: List[Dict[str, Any]]) -> bool:
         """

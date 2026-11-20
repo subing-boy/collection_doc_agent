@@ -410,8 +410,40 @@ def run_all_tests():
         assert "测试主题" in rendered_prompt
         print("  ✔ 自定义 PPT Prompt 模板热加载与动态占位符替换机制正常")
 
+        # --- 测试项 13: 复合概念交集检索优化与 4 轮 Agent Loop 自愈机制测试 ---
+        print("\n[测试 13/13] 执行复合概念交集检索优化与 4 轮 Agent Loop 自愈测试...")
+        # 1. 在沙箱中生成包含 VAD 协议与阶段实现的测试 Markdown 文档
+        vad_test_doc = sandbox_temp / "Live_Mode_Device_Design_ODM_V1.0.md"
+        vad_test_doc.write_text("""# 8. VAD 可选功能
+## 8.1 Phase 1
+第一阶段不实现 VAD 自动拍照：
+- 不启动设备端 VAD 模块。
+- 收到 VAD_ON 或 VAD_OFF 时返回 NOT_SUPPORTED。
+
+## 8.2 Phase 2
+后续版本可增加 VAD 自动拍照：
+- 检测到新的 speech-start 时立即拍摄一张照片。
+- 持续语音期间不重复拍照。
+""", encoding="utf-8")
+
+        agent.ingest_document(vad_test_doc)
+
+        # 2. 验证多概念交集 (live mode + vad) 能将 VAD 章节推至 Top 结果
+        vad_qa = agent.ask("live mode 中 vad 具体实现请写出一个具体的需求文档")
+        assert len(vad_qa["sources"]) > 0
+        top_vad_labels = [s["location_label"] for s in vad_qa["sources"]]
+        assert any("8.1 Phase 1" in lbl or "8.2 Phase 2" in lbl for lbl in top_vad_labels)
+        print("  ✔ 复合实体交集加权算法生效，VAD 关键章节精准跻身 Top-K")
+
+        # 3. 验证 MetadataDB 深度穿透筛查与邻近章节扩展工具
+        vad_grep = agent.metadata_db.grep_chunks_by_term("vad")
+        assert len(vad_grep) >= 2
+        adj_test = agent.metadata_db.get_adjacent_chunks(vad_grep[0]["doc_id"], vad_grep[0]["page_or_slide"], window=1)
+        assert len(adj_test) >= 1
+        print("  ✔ 深度穿透筛查 deep_keyword_grep 与章节扩展 expand_adjacent_chunks 工具验证正常")
+
         print("\n" + "=" * 65)
-        print("🎉 恭喜！全部 12 项端到端自检测试均 100% 通过！")
+        print("🎉 恭喜！全部 13 项端到端自检测试均 100% 通过！")
         print("=" * 65)
 
     finally:
