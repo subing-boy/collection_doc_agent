@@ -30,9 +30,10 @@ DB_DIR = DATA_DIR / "db"
 # 生成物导出目录（存放 Agent 逆向生成的新 docx / pptx）
 OUTPUT_DIR = DATA_DIR / "output"
 
-# 提示词模板目录与自定义 PPT 提示词文件路径 (可由用户随时自由编辑调整)
+# 提示词模板目录与自定义 PPT / Doc 提示词文件路径 (可由用户随时自由编辑调整)
 PROMPTS_DIR = PROJECT_ROOT / "prompts"
 PPT_PROMPT_TEMPLATE_PATH = PROMPTS_DIR / "ppt_prompt.txt"
+DOC_PROMPT_TEMPLATE_PATH = PROMPTS_DIR / "doc_prompt.txt"
 
 # 确保核心工作目录在初始化时即存在
 for directory in [DATA_DIR, STORAGE_DIR, DB_DIR, OUTPUT_DIR, PROMPTS_DIR]:

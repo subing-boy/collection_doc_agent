@@ -442,8 +442,38 @@ def run_all_tests():
         assert len(adj_test) >= 1
         print("  ✔ 深度穿透筛查 deep_keyword_grep 与章节扩展 expand_adjacent_chunks 工具验证正常")
 
+        # --- 测试项 14: 快慢双车道意图路由器与口语化方案文档导出测试 ---
+        print("\n[测试 14/14] 执行快慢双车道意图路由器与方案文档导出测试...")
+        # 1. 验证用户提问真实长句分流
+        doc_prompt_tc = r"制作一个live mode vad的具体需求方案 放在D:\download路径下"
+        router_res = agent.intent_router.analyze_intent(doc_prompt_tc)
+        assert router_res["intent"] == "make_doc"
+        assert "live mode vad" in router_res["topic"]
+        assert router_res["target_dir"] == Path("/mnt/d/download")
+        print(f"  ✔ 真实长句成功由语义路由器分流为 make_doc: 主题=[{router_res['topic']}], 目标=[{router_res['target_dir']}]")
+
+        # 2. 验证口语化变体“整一份...说明书 存到 D:\download 目录”
+        slang_tc = r"给我整一份关于AIW场景协议的技术方案 存到 D:\download 目录"
+        slang_res = agent.intent_router.analyze_intent(slang_tc)
+        assert slang_res["intent"] == "make_doc"
+        assert "AIW场景协议" in slang_res["topic"]
+        print("  ✔ 口语化变体长句成功泛化识别为 make_doc，彻底摆脱死板规则枚举")
+
+        # 3. 验证常规纯问答不会被误判
+        ask_tc = "蓝牙协议的MTU协商机制是什么？"
+        ask_res = agent.intent_router.analyze_intent(ask_tc)
+        assert ask_res["intent"] == "ask"
+        print("  ✔ 常规知识问答语句未被误判为生成，精准分流至 ask")
+
+        # 4. 验证 Word 方案文档自定义目录直出与动态 Prompt 读取
+        sandbox_doc_out = sandbox_dir / "custom_doc_output"
+        out_doc = agent.generate_new_doc("LiveModeVAD需求方案", output_dir=sandbox_doc_out)
+        assert out_doc.exists()
+        assert out_doc.parent == sandbox_doc_out
+        print(f"  ✔ 成功根据动态 doc_prompt 将方案文档导出至目标目录: {out_doc.name}")
+
         print("\n" + "=" * 65)
-        print("🎉 恭喜！全部 13 项端到端自检测试均 100% 通过！")
+        print("🎉 恭喜！全部 14 项端到端自检测试均 100% 通过！")
         print("=" * 65)
 
     finally:

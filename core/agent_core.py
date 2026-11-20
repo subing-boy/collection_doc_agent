@@ -28,6 +28,7 @@ from parsers import get_parser_for_file
 from core.classifier import DocumentClassifier
 from core.memory_manager import MemoryManager
 from core.query_optimizer import QueryOptimizer
+from core.intent_router import IntentRouter
 from core.trace_logger import HarnessTraceLogger, HarnessTraceContext
 from generators.doc_generator import DocGenerator
 from generators.ppt_generator import PPTGenerator
@@ -59,6 +60,7 @@ class AgentCore:
         self.storage_dir = storage_dir or config.STORAGE_DIR
         self.output_dir = output_dir or config.OUTPUT_DIR
         self.trace_logger = trace_logger or HarnessTraceLogger()
+        self.intent_router = IntentRouter(llm_provider=self.llm)
         
         # 2. 向量检索存储引擎
         self.vector_store = vector_store or EmbeddedVectorStore(
@@ -463,6 +465,8 @@ class AgentCore:
         :param top_k: 综合参考的切片数量
         :return: 生成的 docx 文件路径
         """
+        start_time = time.time()
+
         # 1. 召回与主题相关的知识资产 (混合检索)
         clean_topic, keywords = self.clean_query_and_extract_keywords(topic)
         q_vec = self.embedding.embed_text(clean_topic)
@@ -472,34 +476,11 @@ class AgentCore:
             [f"[{c['source_filename']} - {c['location_label']}]:\n{c['content']}" for c in chunks]
         )
 
-        # 2. 要求大模型输出结构化的章节大纲 JSON
-        prompt = f"""请针对主题：“{topic}”，综合以下参考文档资料，撰写一份结构严谨、内容详实的专业总结文档。
-
-【参考资料】:
-{context_materials}
-
-【输出格式要求】:
-必须返回一个合法标准的 JSON 对象，格式定义如下:
-{{
-    "title": "文档主标题",
-    "sections": [
-        {{
-            "heading": "1. 核心架构概述",
-            "level": 1,
-            "paragraphs": [
-                "综合正文分析...",
-                "关键细节与数据..."
-            ],
-            "bullet_points": [
-                "要点一说明 (标注出处: 如 [出处: xxx.docx])",
-                "要点二说明"
-            ]
-        }}
-    ]
-}}
-"""
+        # 2. 动态加载用户可编辑的 Word/Doc 生成 Prompt 模板
+        prompt = self._load_doc_prompt(topic=topic, context_materials=context_materials)
+        system_instruction = "你是一个专业的工程方案与技术需求文档撰写专家，严格输出 JSON。"
         messages = [
-            {"role": "system", "content": "你是一个专业的工程文档撰写专家，严格输出 JSON。"},
+            {"role": "system", "content": system_instruction},
             {"role": "user", "content": prompt}
         ]
 
@@ -508,7 +489,7 @@ class AgentCore:
                 res = self.llm.chat_complete(messages, temperature=0.4, json_mode=True)
                 clean_json = self._clean_json_str(res)
                 data = json.loads(clean_json)
-                doc_title = data.get("title", topic)
+                doc_title = data.get("doc_title") or data.get("title") or topic
                 sections = data.get("sections", [])
             except Exception:
                 doc_title = topic
@@ -518,12 +499,76 @@ class AgentCore:
             sections = self._build_default_doc_sections(topic, chunks)
 
         # 3. 调用 DocGenerator 导出实体文件
-        return self.doc_generator.generate_document(
+        generated_path = self.doc_generator.generate_document(
             title=doc_title,
             sections=sections,
             output_filename=output_filename,
             output_dir=output_dir
         )
+
+        # 4. 维测打点记录：记录实际调用的 Prompt 内容与输出结果
+        elapsed_ms = (time.time() - start_time) * 1000.0
+        trace_ctx = HarnessTraceContext(
+            query=f"[生成Doc] {topic}",
+            system_prompt=system_instruction,
+            available_tools=["MakeDoc (专业结构化 Word 报表导出)", "HybridSearch (双路混合检索)"],
+            invoked_tools=[{
+                "tool": "MakeDoc",
+                "topic": topic,
+                "output_path": str(generated_path),
+                "retrieved_chunks": [
+                    {"source_filename": c.get("source_filename"), "location_label": c.get("location_label"), "score": c.get("score", 0.0)}
+                    for c in chunks
+                ]
+            }],
+            current_prompt=prompt,
+            llm_config={"model": config.DEEPSEEK_MODEL, "temperature": 0.4, "provider": config.DEFAULT_LLM_PROVIDER},
+            ai_response=f"成功根据自定义 Prompt 生成技术需求文档: {generated_path}",
+            execution_time_ms=elapsed_ms
+        )
+        self.trace_logger.record_trace(trace_ctx)
+
+        return generated_path
+
+    @staticmethod
+    def _load_doc_prompt(topic: str, context_materials: str) -> str:
+        """
+        动态热加载用户可编辑的 Word/Doc 生成 Prompt 模板文件
+        若模板文件存在，则读取并替换 {topic} 与 {context_materials}；
+        若不存在或发生异常，安全回退到内置标准提示词。
+        """
+        template_file = config.DOC_PROMPT_TEMPLATE_PATH
+        if template_file.is_file():
+            try:
+                template_str = template_file.read_text(encoding="utf-8")
+                return template_str.format(topic=topic, context_materials=context_materials)
+            except Exception:
+                pass
+
+        return f"""请针对主题：“{topic}”，综合以下参考文档资料，撰写一份结构严谨、内容详实的高质量技术需求与方案文档。
+
+【参考资料】:
+{context_materials}
+
+【输出格式要求】:
+必须返回一个合法标准的 JSON 对象，格式定义如下:
+{{
+    "doc_title": "文档主标题",
+    "sections": [
+        {{
+            "heading": "1. 概述与业务背景",
+            "level": 1,
+            "paragraphs": [
+                "综合正文分析...",
+                "关键细节与数据..."
+            ],
+            "bullet_points": [
+                "要点一说明 (标注出处: 如 [出处: xxx.docx])"
+            ]
+        }}
+    ]
+}}
+"""
 
     def generate_new_ppt(
         self,

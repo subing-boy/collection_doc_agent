@@ -301,69 +301,25 @@ def handle_ask(agent: AgentCore, query: str):
 
 
 def extract_generation_intent_and_target_dir(raw_text: str) -> Optional[Tuple[str, str, Optional[Path]]]:
-    """
-    从自然语言混合输入中提取生成 PPT / Word 的意图、核心主题与自定义输出目录。
-    支持场景如：
-    - "总结一下live mode device + ca + ai 的主要内容包括流程 生成ppt到D:\\download路径下"
-    - "制作ppt: 2026核心技术成果"
-    - "把AIW场景协议的核心要点生成word报表保存至 /mnt/d/download"
-    """
-    text = raw_text.strip()
-    if not text:
-        return None
-
-    # 1. 判断是否含有明确的制作 PPT / Word 意图
-    ppt_pat = re.compile(r'(?:生成|制作|做成|做一份|导出一份|导出|规划)\s*(?:16:9|现代版式)?\s*(?:ppt|pptx|演示文稿|幻灯片)|^make-ppt\b|^生成ppt\b', re.I)
-    doc_pat = re.compile(r'(?:生成|编写|写一份|导出一份|导出)\s*(?:word|doc|docx|文档|报告|报表)|^make-doc\b|^生成doc\b', re.I)
-
-    has_ppt = bool(ppt_pat.search(text))
-    has_doc = bool(doc_pat.search(text))
-
-    if not has_ppt and not has_doc:
-        return None
-
-    action_type = "ppt" if has_ppt else "doc"
-
-    # 2. 匹配目标输出目录: 如 到D:\download 或 保存至 /mnt/d/download 路径下
-    target_dir: Optional[Path] = None
-    dir_match = re.search(
-        r'(?:到|至|保存到|保存至|输出到|输出至|存放于|保存在)\s*([A-Za-z]:[\\/][^?？\s,，。！!]+|/(?:mnt/[a-zA-Z]|home/[^/\s]+)/[^?？\s,，。！!]+)',
-        text
-    )
-    if dir_match:
-        dir_str = dir_match.group(1).rstrip('\"\'/\\')
-        # 剥离多余的后缀词 '路径下', '目录下', '目录', '路径'
-        dir_str = re.sub(r'(?:路径下|目录下|目录|路径)$', '', dir_str).strip()
-        # 处理 Windows 盘符 D:\ -> /mnt/d/
-        if re.match(r'^[A-Za-z]:', dir_str):
-            drive = dir_str[0].lower()
-            rest = dir_str[2:].replace('\\', '/').lstrip('/')
-            target_dir = Path(f'/mnt/{drive}/{rest}').resolve()
-        else:
-            target_dir = Path(dir_str.replace('\\', '/')).resolve()
-
-    # 3. 剥离生成指令和路径，提纯核心主题 Topic
-    clean_topic = text
-    if dir_match:
-        clean_topic = clean_topic.replace(dir_match.group(0), "")
-    clean_topic = re.sub(r'(?:路径下|目录下|目录|路径)', '', clean_topic)
-    clean_topic = ppt_pat.sub('', clean_topic) if has_ppt else doc_pat.sub('', clean_topic)
-
-    # 清洗前后冒号、引号、标点与修饰词
-    clean_topic = clean_topic.strip('\"\' :：。，,！!？? \t\r\n')
-
-    return action_type, clean_topic or text, target_dir
+    """向后兼容辅助函数：委托给 IntentRouter"""
+    from core.intent_router import IntentRouter
+    router = IntentRouter()
+    res = router.analyze_intent(raw_text)
+    if res.get("intent") in ("make_doc", "make_ppt"):
+        action_type = "ppt" if res["intent"] == "make_ppt" else "doc"
+        return action_type, res.get("topic", raw_text), res.get("target_dir")
+    return None
 
 
 def handle_make_doc(agent: AgentCore, topic: str, output_dir: Optional[Path] = None):
     """处理逆向生成 Word 总结报告"""
     if HAS_RICH:
-        console.print(f"[cyan]📝 正在综合资料生成 Word 总结报告: {topic}...[/cyan]")
+        console.print(f"[cyan]📝 正在综合资料生成 Word 技术需求与方案文档: {topic}...[/cyan]")
     else:
-        print(f"📝 正在生成 Word 总结报告: {topic}...")
+        print(f"📝 正在生成 Word 技术需求与方案文档: {topic}...")
 
     out_path = agent.generate_new_doc(topic, output_dir=output_dir)
-    msg = f"✔ Word 报告已成功导出至:\n{out_path}"
+    msg = f"✔ Word 方案文档 (.docx) 已成功导出至:\n{out_path}"
     if HAS_RICH:
         console.print(Panel(msg, border_style="blue"))
     else:
@@ -389,17 +345,16 @@ def run_interactive_loop(agent: AgentCore):
     """
     运行交互式 Shell 会话
     智能自动识别用户意图：
-    - 输入文件路径（.pptx/.docx）自动识别为分类入库；
-    - 自然语言长句制作 PPT/Word 自动提纯主题并导出至指定目录；
-    - 其余自然语言输入均作为溯源问答。
+    - 快车道 (Fast Lane): 退出指令、文件列表、磁盘实体文件路径直接命中；
+    - 慢车道 (Slow Lane): 快慢双车道 IntentRouter 精准识别 make_doc / make_ppt / ask 并分流。
     """
     print_banner()
     help_info = (
         "💡 [bold]快速操作指南[/bold]:\n"
         "  1. [cyan]输入文档路径[/cyan] (如 test.pptx 或 document.docx): 自动执行切片、分类并存储\n"
         "  2. [cyan]输入问题[/cyan] (如 '方案的核心架构是什么'): 自动检索并带准确出处回答\n"
-        "  3. [cyan]make-ppt <主题>[/cyan] 或 [cyan]自然语言长句[/cyan] (如 '总结xxx制作ppt到D:\\download'): 自动导出 PPT\n"
-        "  4. [cyan]make-doc <主题>[/cyan]: 基于知识库逆向总结并生成排版好的 Word 文档\n"
+        "  3. [cyan]自然语言生成需求文档[/cyan] (如 '制作一个live mode vad需求方案 放在D:\\download'): 自动导出 Word\n"
+        "  4. [cyan]自然语言生成演示文稿[/cyan] (如 '总结xxx制作ppt到D:\\download'): 自动导出 PPT\n"
         "  5. [cyan]list[/cyan]: 查看当前知识库已归档的文件列表\n"
         "  6. [cyan]exit / quit[/cyan]: 退出系统\n"
     )
@@ -418,7 +373,7 @@ def run_interactive_loop(agent: AgentCore):
             if not user_input:
                 continue
 
-            # 退出命令
+            # 1. 退出命令 (快车道)
             if user_input.lower() in ("exit", "quit", "q"):
                 if HAS_RICH:
                     console.print("[dim]👋 再见！知识库已妥善保存。[/dim]")
@@ -426,41 +381,38 @@ def run_interactive_loop(agent: AgentCore):
                     print("再见！")
                 break
 
-            # 查看文件清单
+            # 2. 查看文件清单 (快车道)
             elif user_input.lower() in ("list", "ls", "查看文件"):
                 show_documents_table(agent)
 
-            # 自然语言长句生成意图识别 (如: 总结xxx制作ppt到D:\download路径下 或 make-ppt / make-doc)
-            elif (gen_intent := extract_generation_intent_and_target_dir(user_input)) is not None:
-                action_type, gen_topic, target_dir = gen_intent
-                if action_type == "ppt":
-                    handle_make_ppt(agent, gen_topic, output_dir=target_dir)
-                else:
-                    handle_make_doc(agent, gen_topic, output_dir=target_dir)
-
-            # 显式上传归档指令 (如: add <路径>, /add <路径>, 上传 <路径>, 存下来 <路径>, 归档 <路径>)
+            # 3. 显式上传归档指令 (快车道)
             elif user_input.startswith(("ingest ", "add ", "上传 ", "/add ", "归档 ", "存入 ", "保存 ")):
                 raw_path = user_input.split(" ", 1)[1]
                 handle_ingest(agent, raw_path)
 
-            # 智能实体探测与零 LLM 意图分流 (纯存文档 vs 边存边答)
+            # 4. 智能实体探测与零 LLM 意图分流 (纯存文档 vs 边存边答) (快车道)
             elif (detected_file := extract_file_path_from_text(user_input)) is not None:
-                # 剔除抽取出的路径，分析用户在句中是否还伴随有即时提问/分析指令
                 stripped_query = user_input.replace(str(detected_file), "").strip()
                 has_ask_intent = any(k in stripped_query for k in [
                     "？", "?", "总结", "讲了什么", "概括", "分析", "架构是什么", "介绍", "什么是", "核心内容", "如何", "怎样"
                 ])
-
-                # 无论哪种意图，首先完成文档的入库与向量构建
                 handle_ingest(agent, detected_file)
-
-                # 如果用户在提供文档的同时直接提出了分析要求，入库后紧接着回答问题！
                 if has_ask_intent:
                     handle_ask(agent, user_input)
 
-            # 默认为已有知识库问答指令
+            # 5. 快慢双车道意图路由器 (涵盖 make_doc, make_ppt 与 ask)
             else:
-                handle_ask(agent, user_input)
+                intent_res = agent.intent_router.analyze_intent(user_input)
+                action = intent_res.get("intent", "ask")
+                topic = intent_res.get("topic") or user_input
+                target_dir = intent_res.get("target_dir")
+
+                if action == "make_doc":
+                    handle_make_doc(agent, topic, output_dir=target_dir)
+                elif action == "make_ppt":
+                    handle_make_ppt(agent, topic, output_dir=target_dir)
+                else:
+                    handle_ask(agent, user_input)
 
         except KeyboardInterrupt:
             print("\n会话已终止。")
