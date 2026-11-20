@@ -352,8 +352,39 @@ def run_all_tests():
             assert "王总" in top_msg_source["location_label"]
             print(f"  ✔ 邮件问答精准溯源至发件人与通信时间: [{top_msg_source['location_label']}] (得分: {top_msg_source['score']})")
 
+        # --- 测试项 11: Markdown 与纯文本格式切片、自动补齐与溯源问答测试 ---
+        print("\n[测试 11/11] 执行 Markdown 与纯文本格式切片、自动补齐与溯源测试...")
+        md_path = sandbox_temp / "Live_Mode_Device_Design_ODM_V1.0.md"
+        md_path.write_text("""# 1. 硬件架构总览
+本规范定义了智能眼镜 Live Mode 下的硬件模块交互。
+
+## 1.1 摄像头与传感器通道
+摄像头传感器通过 MIPI CSI 接口直连主控，帧率锁定为 30fps。
+
+## 1.2 供电与低功耗策略
+在待机状态下，电源管理芯片切换为休眠节能模式。
+""", encoding="utf-8")
+
+        # 验证漏输 .md 后缀时依然能被精准探测提取
+        path_without_ext = str(md_path)[:-3]  # 去掉 .md
+        detected_md = extract_file_path_from_text(f"帮我存入 {path_without_ext}")
+        assert detected_md is not None and detected_md.name == md_path.name
+        print(f"  ✔ 漏输 .md 后缀秒级自动探测补全正常: [{detected_md.name}]")
+
+        md_report = agent.ingest_document(md_path)
+        assert md_report["status"] == "success"
+        assert md_report["chunks_count"] >= 2
+        print(f"  ✔ Markdown 入库成功: 分类为 [{md_report['category']}], 切片数: {md_report['chunks_count']}")
+
+        # 提问 Markdown 细节，验证出处包含 Markdown # 标题面包屑
+        md_qa = agent.ask("智能眼镜摄像头传感器的接口与帧率是多少？")
+        assert len(md_qa["sources"]) > 0
+        top_md_source = md_qa["sources"][0]
+        assert "1.1 摄像头与传感器通道" in top_md_source["location_label"]
+        print(f"  ✔ Markdown 问答精准溯源至章节面包屑: [{top_md_source['location_label']}] (得分: {top_md_source['score']})")
+
         print("\n" + "=" * 65)
-        print("🎉 恭喜！全部 10 项端到端自检测试均 100% 通过！")
+        print("🎉 恭喜！全部 11 项端到端自检测试均 100% 通过！")
         print("=" * 65)
 
     finally:

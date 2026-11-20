@@ -12,12 +12,14 @@ from parsers.pptx_parser import PPTXParser
 from parsers.docx_parser import DOCXParser
 from parsers.excel_parser import ExcelParser
 from parsers.msg_parser import MSGParser
+from parsers.markdown_parser import MarkdownParser
 
 _AVAILABLE_PARSERS = [
     PPTXParser(),
     DOCXParser(),
     ExcelParser(),
     MSGParser(),
+    MarkdownParser(),
 ]
 
 
@@ -35,7 +37,7 @@ def get_parser_for_file(file_path: Path) -> BaseParser:
 
     raise ValueError(
         f"不支持的文件格式: {path_obj.suffix}。\n"
-        f"当前系统已支持格式: {[p.__class__.__name__ for p in _AVAILABLE_PARSERS]} (.pptx, .docx, .xlsx, .msg)"
+        f"当前系统已支持格式: {[p.__class__.__name__ for p in _AVAILABLE_PARSERS]} (.pptx, .docx, .xlsx, .msg, .md, .txt)"
     )
 
 
@@ -47,5 +49,6 @@ __all__ = [
     "DOCXParser",
     "ExcelParser",
     "MSGParser",
+    "MarkdownParser",
     "get_parser_for_file",
 ]

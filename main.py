@@ -43,7 +43,7 @@ def resolve_input_file_path(raw_path: str) -> Optional[Path]:
     if not p_str:
         return None
 
-    SUPPORTED_EXTS = [".docx", ".pptx", ".xlsx", ".msg"]
+    SUPPORTED_EXTS = [".docx", ".pptx", ".xlsx", ".msg", ".md", ".txt"]
 
     # 如果包含明显的自然语言提问特征且不以支持格式结尾，则不视为路径
     if any(q in p_str for q in ["？", "?", "为什么", "怎么", "什么", "如何"]) and not any(p_str.lower().endswith(ext) for ext in SUPPORTED_EXTS):
@@ -68,7 +68,7 @@ def resolve_input_file_path(raw_path: str) -> Optional[Path]:
         return target
 
     # 3. 如果用户漏输了扩展名，在磁盘上尝试自动探测补全支持的后缀
-    for ext in [".docx", ".pptx", ".xlsx", ".msg", ".DOCX", ".PPTX", ".XLSX", ".MSG"]:
+    for ext in [".docx", ".pptx", ".xlsx", ".msg", ".md", ".txt", ".DOCX", ".PPTX", ".XLSX", ".MSG", ".MD", ".TXT"]:
         candidate = Path(f"{p_str}{ext}").resolve()
         if candidate.is_file():
             return candidate
@@ -86,7 +86,7 @@ def extract_file_path_from_text(raw_text: str) -> Optional[Path]:
     2. 若不是纯路径，正则扫描 Windows 盘符路径 (如 D:\\xxx 或 D:/xxx)；
     3. 正则扫描 Linux/WSL 绝对路径 (如 /mnt/d/xxx 或 /home/xxx)；
     4. 对剥离出的路径候选采用后置清洗与逐词回退，并在磁盘上实时校验；
-    5. 若在磁盘上真实存在对应的 Office 实体文件，则返回 Path；否则返回 None（确保零误杀）。
+    5. 若在磁盘上真实存在对应的文档实体文件，则返回 Path；否则返回 None（确保零误杀）。
     """
     clean_text = raw_text.strip('\"\' ')
     if not clean_text:
@@ -109,7 +109,7 @@ def extract_file_path_from_text(raw_text: str) -> Optional[Path]:
     candidates.extend(linux_pat.findall(clean_text))
 
     # 模式 C: 匹配显式带支持扩展名的文件名片段
-    ext_pat = re.compile(r'[^?？\s\"\'\r\n\t]+\.(?:docx|pptx|xlsx|msg|DOCX|PPTX|XLSX|MSG)')
+    ext_pat = re.compile(r'[^?？\s\"\'\r\n\t]+\.(?:docx|pptx|xlsx|msg|md|txt|DOCX|PPTX|XLSX|MSG|MD|TXT)')
     candidates.extend(ext_pat.findall(clean_text))
 
     # 3. 对每个候选逐词回退清洗并校验是否存在于磁盘
