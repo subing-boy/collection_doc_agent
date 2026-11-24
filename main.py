@@ -341,6 +341,18 @@ def handle_make_ppt(agent: AgentCore, topic: str, output_dir: Optional[Path] = N
         print(msg)
 
 
+def format_surrogate_error_notice(e: Exception) -> str:
+    """
+    针对 Unicode 代理字符（如 \\udce5）截断异常生成清晰友好的诊断说明
+    说明空格或退格切断了 UTF-8 多字节导致识别成了 \\udce5
+    """
+    return (
+        f"运行时出现异常: {e}\n\n"
+        f"💡 编码原理解析: 说明空格切断了utf-8字节导致识别成了\\udce5 (中文多字节截断导致代理字符异常)。\n"
+        f"建议: 请检查该位置的输入，删除残缺的断裂字符，重新完整输入中文字符。"
+    )
+
+
 def run_interactive_loop(agent: AgentCore):
     """
     运行交互式 Shell 会话
@@ -418,10 +430,18 @@ def run_interactive_loop(agent: AgentCore):
             print("\n会话已终止。")
             break
         except Exception as e:
-            if HAS_RICH:
-                console.print(f"[bold red]运行时出现异常: {e}[/bold red]")
+            err_msg = str(e)
+            if "surrogates not allowed" in err_msg or "\\udce5" in repr(e) or "\udce5" in err_msg:
+                notice = format_surrogate_error_notice(e)
+                if HAS_RICH:
+                    console.print(Panel(notice, title="[red]UTF-8 字符编码截断[/red]", border_style="red"))
+                else:
+                    print(f"⚠️ {notice}")
             else:
-                print(f"运行时出现异常: {e}")
+                if HAS_RICH:
+                    console.print(f"[bold red]运行时出现异常: {e}[/bold red]")
+                else:
+                    print(f"运行时出现异常: {e}")
 
 
 def main():

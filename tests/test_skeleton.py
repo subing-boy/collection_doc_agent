@@ -472,8 +472,18 @@ def run_all_tests():
         assert out_doc.parent == sandbox_doc_out
         print(f"  ✔ 成功根据动态 doc_prompt 将方案文档导出至目标目录: {out_doc.name}")
 
+        # --- 测试项 15: 终端代理字符 (\\udce5) 异常友好诊断说明测试 ---
+        print("\n[测试 15/15] 执行终端代理字符 (\\udce5) 异常友好诊断说明测试...")
+        from main import format_surrogate_error_notice
+
+        simulated_err = UnicodeEncodeError('utf-8', '在\udce5', 1, 2, 'surrogates not allowed')
+        notice_output = format_surrogate_error_notice(simulated_err)
+        assert "空格切断了utf-8字节导致识别成了\\udce5" in notice_output
+        assert "surrogates not allowed" in notice_output
+        print("  ✔ 代理字符截断异常捕获与友好原理解释生成验证正常")
+
         print("\n" + "=" * 65)
-        print("🎉 恭喜！全部 14 项端到端自检测试均 100% 通过！")
+        print("🎉 恭喜！全部 15 项端到端自检测试均 100% 通过！")
         print("=" * 65)
 
     finally:
