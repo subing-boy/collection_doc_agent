@@ -482,8 +482,36 @@ def run_all_tests():
         assert "surrogates not allowed" in notice_output
         print("  ✔ 代理字符截断异常捕获与友好原理解释生成验证正常")
 
+        # --- 测试项 16: 存储能力边界矩阵与不支持格式友好拦截测试 ---
+        print("\n[测试 16/16] 执行存储能力边界矩阵与不支持格式拦截提示测试...")
+        from main import check_unsupported_format_tip
+
+        # 1. 验证旧版二进制格式另存指引
+        doc_tip = check_unsupported_format_tip("旧版协议规范.doc")
+        assert doc_tip is not None and "另存为现代 (.docx)" in doc_tip
+        print("  ✔ 旧版 .doc 二进制格式精准识别并给出另存为 .docx 指引")
+
+        # 2. 验证压缩包解压提示
+        zip_tip = check_unsupported_format_tip("资料汇总.zip")
+        assert zip_tip is not None and "解压后" in zip_tip
+        print("  ✔ 压缩包 .zip 精准识别并给出解压后存入指引")
+
+        # 3. 验证 PDF 演进规划提示
+        pdf_tip = check_unsupported_format_tip("白皮书.pdf")
+        assert pdf_tip is not None and "演进规划中" in pdf_tip
+        print("  ✔ PDF 格式精准识别并给出格式转换与演进提示")
+
+        # 4. 验证支持格式返回 None (放行)
+        assert check_unsupported_format_tip("规范.docx") is None
+        assert check_unsupported_format_tip("演示.pptx") is None
+        assert check_unsupported_format_tip("报表.xlsx") is None
+        assert check_unsupported_format_tip("邮件.msg") is None
+        assert check_unsupported_format_tip("设计.md") is None
+        assert check_unsupported_format_tip("笔记.txt") is None
+        print("  ✔ 全部 6 大支持格式 (.docx/.pptx/.xlsx/.msg/.md/.txt) 正常放行")
+
         print("\n" + "=" * 65)
-        print("🎉 恭喜！全部 15 项端到端自检测试均 100% 通过！")
+        print("🎉 恭喜！全部 16 项端到端自检测试均 100% 通过！")
         print("=" * 65)
 
     finally:

@@ -134,13 +134,15 @@ def print_banner():
     """打印系统欢迎横幅与模式指引"""
     banner_text = (
         "[bold cyan]🤖 个人文档管家 Agent (Personal Doc & PPT Agent)[/bold cyan]\n"
-        "[dim]基于 DeepSeek 驱动架构  •  多格式切片归档  •  带严格出处 RAG 问答  •  逆向生成 Doc/PPT[/dim]"
+        "[dim]基于 DeepSeek 驱动架构  •  多格式切片归档  •  带严格出处 RAG 问答  •  逆向生成 Doc/PPT[/dim]\n"
+        "[bold green]✔ 已支持格式:[/bold green] [dim].docx, .pptx, .xlsx, .msg, .md, .txt[/dim]"
     )
     if HAS_RICH:
         console.print(Panel(banner_text, border_style="blue", expand=False))
     else:
         print("=" * 70)
         print("🤖 个人文档管家 Agent (Personal Doc & PPT Agent)")
+        print("✔ 已支持格式: .docx, .pptx, .xlsx, .msg, .md, .txt")
         print("=" * 70)
 
 
@@ -148,7 +150,7 @@ def show_documents_table(agent: AgentCore):
     """格式化展示当前知识库已归档的文件清单"""
     docs = agent.list_documents()
     if not docs:
-        msg = "当前知识库尚无文档，您可以输入一个 .docx 或 .pptx 文件路径进行添加归档！"
+        msg = "当前知识库尚无文档，您可以输入已支持的文件路径（如 .docx, .pptx, .xlsx, .msg, .md, .txt）进行添加归档！"
         if HAS_RICH:
             console.print(f"[yellow]{msg}[/yellow]")
         else:
@@ -179,8 +181,50 @@ def show_documents_table(agent: AgentCore):
         print("---------------------------------\n")
 
 
+# ==============================================================================
+# 不支持格式库与友好转换指引字典
+# ==============================================================================
+UNSUPPORTED_FORMAT_TIPS = {
+    ".doc": "旧版 Word (.doc) 属于专有二进制格式，请在 Office/WPS 中另存为现代 (.docx) 格式后重新存入。",
+    ".xls": "旧版 Excel (.xls) 属于专有二进制格式，请另存为现代 (.xlsx) 格式后重新存入。",
+    ".ppt": "旧版 PowerPoint (.ppt) 属于专有二进制格式，请另存为现代 (.pptx) 格式后重新存入。",
+    ".pdf": "PDF (.pdf) 格式目前正在演进规划中，建议当前转换为 Word (.docx) 或 Markdown (.md) 后存入。",
+    ".zip": "压缩包 (.zip) 无法直接维持切片出处，请在本地解压后将内部文档逐一存入。",
+    ".rar": "压缩包 (.rar) 无法直接维持切片出处，请解压后存入内部文档。",
+    ".7z": "压缩包 (.7z) 无法直接维持切片出处，请解压后存入内部文档。",
+    ".png": "纯图片 (.png) 暂未挂载 OCR 识别引擎，建议提取文字后以 .md 或 .docx 格式存入。",
+    ".jpg": "纯图片 (.jpg) 暂未挂载 OCR 识别引擎，建议提取文字后以 .md 或 .docx 格式存入。",
+    ".jpeg": "纯图片 (.jpeg) 暂未挂载 OCR 识别引擎，建议提取文字后以 .md 或 .docx 格式存入。",
+    ".mp3": "音频多媒体文件 (.mp3) 暂未接入语音转录模型，建议转录为会议纪要文本后存入。",
+    ".mp4": "视频文件 (.mp4) 暂未接入多模态解析引擎，建议整理为方案文档后存入。"
+}
+
+
+def check_unsupported_format_tip(file_path: Union[str, Path]) -> Optional[str]:
+    """
+    检查文件后缀是否属于已知的不支持格式，并给出针对性的友好转换操作建议
+    """
+    suffix = Path(str(file_path).strip('\"\' ')).suffix.lower()
+    return UNSUPPORTED_FORMAT_TIPS.get(suffix)
+
+
 def handle_ingest(agent: AgentCore, file_path_input: Union[str, Path]):
     """处理文档上传与分类存储"""
+    # 优先拦截已知的不支持格式并给出友好指引
+    tip = check_unsupported_format_tip(file_path_input)
+    if tip:
+        suffix = Path(str(file_path_input).strip('\"\' ')).suffix.lower()
+        notice = (
+            f"❌ 格式暂不受支持: [bold red]{suffix}[/bold red]\n"
+            f"💡 操作建议: {tip}\n"
+            f"📌 当前原生支持格式: [.docx, .pptx, .xlsx, .msg, .md, .txt]"
+        )
+        if HAS_RICH:
+            console.print(Panel(notice, title="[yellow]存储格式能力边界提示[/yellow]", border_style="yellow"))
+        else:
+            print(f"\n⚠️ 格式暂不受支持: {suffix}\n操作建议: {tip}\n当前支持格式: [.docx, .pptx, .xlsx, .msg, .md, .txt]\n")
+        return
+
     if isinstance(file_path_input, Path):
         p = file_path_input
     else:
@@ -363,7 +407,9 @@ def run_interactive_loop(agent: AgentCore):
     print_banner()
     help_info = (
         "💡 [bold]快速操作指南[/bold]:\n"
-        "  1. [cyan]输入文档路径[/cyan] (如 test.pptx 或 document.docx): 自动执行切片、分类并存储\n"
+        "  1. [cyan]输入文档路径[/cyan]: 自动执行切片、分类并存储入库\n"
+        "     • [bold green]✔ 支持格式[/bold green]: .docx, .pptx, .xlsx, .msg, .md, .txt\n"
+        "     • [bold yellow]❌ 不支持格式[/bold yellow]: .doc/.xls/.ppt (建议另存为现代格式), .pdf (规划中), .zip, 图片/音视频\n"
         "  2. [cyan]输入问题[/cyan] (如 '方案的核心架构是什么'): 自动检索并带准确出处回答\n"
         "  3. [cyan]自然语言生成需求文档[/cyan] (如 '制作一个live mode vad需求方案 放在D:\\download'): 自动导出 Word\n"
         "  4. [cyan]自然语言生成演示文稿[/cyan] (如 '总结xxx制作ppt到D:\\download'): 自动导出 PPT\n"
