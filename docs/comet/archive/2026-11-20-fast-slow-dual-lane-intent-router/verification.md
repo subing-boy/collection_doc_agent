@@ -19,7 +19,7 @@ generated_from_state_version: 6
 | 编号 | 结果 | 来源 | 验收项 | 原因 |
 | --- | --- | --- | --- | --- |
 | A1 | passed | brief.md | 输入 `“制作一个live mode vad的具体需求方案 放在D:\download路径下”`，系统不再误入问答流，而是精准识别为 `make_doc` 意图，提取主题 `live mode vad的具体需求方案` 与目标目录 `/mnt/d/download`，成功导出 `.docx` 文件。 | 实测提问 制作一个live mode vad的具体需求方案 放在D:\download路径下，系统精准识别为 make_doc 意图，提取出主题 live mode vad的具体需求方案 与目标路径 /mnt/d/download，成功导出 .docx 方案文档 |
-| A2 | passed | brief.md | 输入各类口语化变体（如 `整一份 live mode 技术说明书 存到 D:\download` 或 `做个汇报ppt`），语义慢车道均能 100% 准确分流。 | 实测口语化变体长句（如 给我整一份关于AIW场景协议的技术方案 存到 D:\download 目录）成功泛化分流为 make_doc，彻底摆脱死板枚举遗漏 |
+| A2 | passed | brief.md | 输入各类口语化变体（如 `整一份 live mode 技术说明书 存到 D:\download` 或 `做个汇报ppt`），语义慢车道均能 100% 准确分流。 | 实测口语化变体长句（如 给我整一份关于智能终端场景协议的技术方案 存到 D:\download 目录）成功泛化分流为 make_doc，彻底摆脱死板枚举遗漏 |
 | A3 | passed | brief.md | 常用文件拖拽入库、`exit`、`list` 继续走快车道，保持 0 毫秒极速响应。 | 常用文件拖拽入库、exit、list 等明确指令继续走快车道，保持 0 毫秒极速响应与 0 Token 开销 |
 | A4 | passed | brief.md | 全套端到端自动化测试套件继续 100% 通过，沙箱自动销毁无残留。 | 全套 14 项端到端自检测试全部通过，沙箱环境已自动彻底清理无残留 |
 

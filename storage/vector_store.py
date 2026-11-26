@@ -167,7 +167,7 @@ class EmbeddedVectorStore(BaseVectorStore):
                     elif term in content_lower:
                         term_points += 0.4 if " " in term else 0.35
                         term_matched = True
-                    # 所属文件名命中 (场景对齐，支持 live_mode 匹配 live mode)
+                    # 所属文件名命中 (场景对齐，支持下划线/连字符归一化匹配)
                     elif term in doc_name_lower:
                         term_points += 0.3 if " " in term else 0.2
                         term_matched = True

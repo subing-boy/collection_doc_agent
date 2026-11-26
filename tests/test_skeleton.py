@@ -329,15 +329,15 @@ def run_all_tests():
         print(f"  ✔ Excel 问答精准溯源至工作表与行号: [{top_excel_source['location_label']}] (得分: {top_excel_source['score']})")
 
         # 2. 动态生成测试用 MSG 邮件并模拟解析
-        msg_path = sandbox_temp / "关于AIW协议终审的决议.msg"
+        msg_path = sandbox_temp / "关于智能终端协议终审的决议.msg"
         msg_path.touch()
 
         mock_email = MagicMock()
-        mock_email.subject = "关于AIW协议终审的决议"
+        mock_email.subject = "关于智能终端协议终审的决议"
         mock_email.sender = "王总 <wang@company.com>"
         mock_email.to = "项目组全体"
         mock_email.date = "2026-11-18 10:00:00"
-        mock_email.body = "经评审委员会讨论，正式确认AIW 11.3协议基线标准通过。"
+        mock_email.body = "经评审委员会讨论，正式确认智能终端11.3通信协议基线标准通过。"
 
         with patch("extract_msg.Message", return_value=mock_email):
             msg_report = agent.ingest_document(msg_path)
@@ -346,7 +346,7 @@ def run_all_tests():
             print(f"  ✔ MSG 邮件入库成功: 分类为 [{msg_report['category']}], 切片数: {msg_report['chunks_count']}")
 
             # 提问邮件决议内容，验证出处包含发件人与时间
-            msg_qa = agent.ask("王总对AIW协议终审的决议内容是什么？")
+            msg_qa = agent.ask("王总对智能终端协议终审的决议内容是什么？")
             assert len(msg_qa["sources"]) > 0
             top_msg_source = msg_qa["sources"][0]
             assert "王总" in top_msg_source["location_label"]
@@ -354,9 +354,9 @@ def run_all_tests():
 
         # --- 测试项 11: Markdown 与纯文本格式切片、自动补齐与溯源问答测试 ---
         print("\n[测试 11/11] 执行 Markdown 与纯文本格式切片、自动补齐与溯源测试...")
-        md_path = sandbox_temp / "Live_Mode_Device_Design_ODM_V1.0.md"
+        md_path = sandbox_temp / "Device_Sensor_Design_Specification.md"
         md_path.write_text("""# 1. 硬件架构总览
-本规范定义了智能眼镜 Live Mode 下的硬件模块交互。
+本规范定义了智能终端设备架构下的硬件模块交互。
 
 ## 1.1 摄像头与传感器通道
 摄像头传感器通过 MIPI CSI 接口直连主控，帧率锁定为 30fps。
@@ -388,18 +388,18 @@ def run_all_tests():
         from main import extract_generation_intent_and_target_dir
 
         # 1. 验证口语化长句意图与 Windows 盘符目标路径抽取
-        test_long_prompt = r"总结一下live mode device + ca + ai 的主要内容包括流程 生成ppt到D:\download路径下"
+        test_long_prompt = r"总结一下系统架构设计的主要内容包括流程 生成ppt到D:\download路径下"
         extracted = extract_generation_intent_and_target_dir(test_long_prompt)
         assert extracted is not None
         act_type, extracted_topic, target_dest = extracted
         assert act_type == "ppt"
-        assert "live mode device" in extracted_topic
+        assert "系统架构设计" in extracted_topic
         assert target_dest == Path("/mnt/d/download")
         print(f"  ✔ 口语化制作 PPT 意图与保存目录抽取正常: 主题=[{extracted_topic}], 目标目录=[{target_dest}]")
 
         # 2. 验证自定义目标目录导出
         sandbox_custom_out = sandbox_dir / "custom_download"
-        custom_ppt_file = agent.generate_new_ppt("智能眼镜LiveMode架构汇报", output_dir=sandbox_custom_out)
+        custom_ppt_file = agent.generate_new_ppt("核心系统架构全景汇报", output_dir=sandbox_custom_out)
         assert custom_ppt_file.exists()
         assert custom_ppt_file.parent == sandbox_custom_out
         print(f"  ✔ 成功将 PPT 直接导出到用户指定的自定义目录: {custom_ppt_file}")
@@ -413,7 +413,7 @@ def run_all_tests():
         # --- 测试项 13: 复合概念交集检索优化与 4 轮 Agent Loop 自愈机制测试 ---
         print("\n[测试 13/13] 执行复合概念交集检索优化与 4 轮 Agent Loop 自愈测试...")
         # 1. 在沙箱中生成包含 VAD 协议与阶段实现的测试 Markdown 文档
-        vad_test_doc = sandbox_temp / "Live_Mode_Device_Design_ODM_V1.0.md"
+        vad_test_doc = sandbox_temp / "Device_Sensor_Design_Specification.md"
         vad_test_doc.write_text("""# 8. VAD 可选功能
 ## 8.1 Phase 1
 第一阶段不实现 VAD 自动拍照：
@@ -428,8 +428,8 @@ def run_all_tests():
 
         agent.ingest_document(vad_test_doc)
 
-        # 2. 验证多概念交集 (live mode + vad) 能将 VAD 章节推至 Top 结果
-        vad_qa = agent.ask("live mode 中 vad 具体实现请写出一个具体的需求文档")
+        # 2. 验证多概念交集 (device sensor + vad) 能将 VAD 章节推至 Top 结果
+        vad_qa = agent.ask("device sensor 中 vad 具体实现请写出一个具体的需求文档")
         assert len(vad_qa["sources"]) > 0
         top_vad_labels = [s["location_label"] for s in vad_qa["sources"]]
         assert any("8.1 Phase 1" in lbl or "8.2 Phase 2" in lbl for lbl in top_vad_labels)
@@ -445,18 +445,18 @@ def run_all_tests():
         # --- 测试项 14: 快慢双车道意图路由器与口语化方案文档导出测试 ---
         print("\n[测试 14/14] 执行快慢双车道意图路由器与方案文档导出测试...")
         # 1. 验证用户提问真实长句分流
-        doc_prompt_tc = r"制作一个live mode vad的具体需求方案 放在D:\download路径下"
+        doc_prompt_tc = r"制作一个device sensor vad的具体需求方案 放在D:\download路径下"
         router_res = agent.intent_router.analyze_intent(doc_prompt_tc)
         assert router_res["intent"] == "make_doc"
-        assert "live mode vad" in router_res["topic"]
+        assert "device sensor vad" in router_res["topic"]
         assert router_res["target_dir"] == Path("/mnt/d/download")
         print(f"  ✔ 真实长句成功由语义路由器分流为 make_doc: 主题=[{router_res['topic']}], 目标=[{router_res['target_dir']}]")
 
         # 2. 验证口语化变体“整一份...说明书 存到 D:\download 目录”
-        slang_tc = r"给我整一份关于AIW场景协议的技术方案 存到 D:\download 目录"
+        slang_tc = r"给我整一份关于智能终端通信协议的技术方案 存到 D:\download 目录"
         slang_res = agent.intent_router.analyze_intent(slang_tc)
         assert slang_res["intent"] == "make_doc"
-        assert "AIW场景协议" in slang_res["topic"]
+        assert "智能终端通信协议" in slang_res["topic"]
         print("  ✔ 口语化变体长句成功泛化识别为 make_doc，彻底摆脱死板规则枚举")
 
         # 3. 验证常规纯问答不会被误判
@@ -467,7 +467,7 @@ def run_all_tests():
 
         # 4. 验证 Word 方案文档自定义目录直出与动态 Prompt 读取
         sandbox_doc_out = sandbox_dir / "custom_doc_output"
-        out_doc = agent.generate_new_doc("LiveModeVAD需求方案", output_dir=sandbox_doc_out)
+        out_doc = agent.generate_new_doc("DeviceSensorVAD需求方案", output_dir=sandbox_doc_out)
         assert out_doc.exists()
         assert out_doc.parent == sandbox_doc_out
         print(f"  ✔ 成功根据动态 doc_prompt 将方案文档导出至目标目录: {out_doc.name}")

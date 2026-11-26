@@ -18,9 +18,9 @@ generated_from_state_version: 6
 
 | 编号 | 结果 | 来源 | 验收项 | 原因 |
 | --- | --- | --- | --- | --- |
-| A1 | passed | brief.md | 输入省略了 `.md` 后缀的路径 `D:\download\Live_Mode_Device_Design_ODM_V1.0`，系统能自动在磁盘探测到真实 `.md` 实体，成功触发文档分类与入库，绝不落入自然语言问答流。 | 实测用户输入省略后缀的 D:\download\Live_Mode_Device_Design_ODM_V1.0，系统秒级自动探测补齐为 .md 实体并触发文档入库，绝不误入问答流 |
+| A1 | passed | brief.md | 输入省略了 `.md` 后缀的路径 `D:\download\Device_Sensor_Design_ODM_V1.0`，系统能自动在磁盘探测到真实 `.md` 实体，成功触发文档分类与入库，绝不落入自然语言问答流。 | 实测用户输入省略后缀的 D:\download\Device_Sensor_Design_ODM_V1.0，系统秒级自动探测补齐为 .md 实体并触发文档入库，绝不误入问答流 |
 | A2 | passed | brief.md | 输入包含多级标题的 `.md` 文件，解析器能按 `#` 标题层级提取切片并正确维护章节面包屑标签。 | 实测 MarkdownParser 成功按 # 标题层级切片并构建面包屑导航坐标（如 1. 硬件架构总览 > 1.1 摄像头与传感器通道） |
-| A3 | passed | brief.md | 针对 `.md` 文档内容提问时，RAG 回答必须严格包含 `[出处: xx.md, 章节坐标]` 标记。 | 实测针对 Markdown 内容提问，RAG 回答精准命中出处 [出处: Live_Mode_Device_Design_ODM_V1.0.md, 1.1 摄像头与传感器通道] |
+| A3 | passed | brief.md | 针对 `.md` 文档内容提问时，RAG 回答必须严格包含 `[出处: xx.md, 章节坐标]` 标记。 | 实测针对 Markdown 内容提问，RAG 回答精准命中出处 [出处: Device_Sensor_Design_ODM_V1.0.md, 1.1 摄像头与传感器通道] |
 | A4 | passed | brief.md | 全套端到端自动化测试套件继续 100% 通过，沙箱自动销毁无残留。 | 全套 11 项端到端自检测试全部通过，沙箱环境已自动彻底清理无残留 |
 
 ## 检查

@@ -18,7 +18,7 @@ generated_from_state_version: 6
 
 | 编号 | 结果 | 来源 | 验收项 | 原因 |
 | --- | --- | --- | --- | --- |
-| A1 | passed | brief.md | 输入提问 `live mode 中 vad 具体实现请写出一个具体的需求文档`，系统不再返回“未找到”，而是精准锁定 `Live_Mode_Device_Design_ODM_V1.0.md` 第 8 节（含 Phase 1 与 Phase 2）并生成详尽需求文档。 | 实测提问 live mode 中 vad 具体实现请写出一个具体的需求文档，系统精准命中 Live_Mode_Device_Design_ODM_V1.0.md 第 8.1 节与 8.2 节，并生成出涵盖 Phase 1/Phase 2 的详尽规范需求文档 |
+| A1 | passed | brief.md | 输入提问 `live mode 中 vad 具体实现请写出一个具体的需求文档`，系统不再返回“未找到”，而是精准锁定 `Device_Sensor_Design_ODM_V1.0.md` 第 8 节（含 Phase 1 与 Phase 2）并生成详尽需求文档。 | 实测提问 live mode 中 vad 具体实现请写出一个具体的需求文档，系统精准命中 Device_Sensor_Design_ODM_V1.0.md 第 8.1 节与 8.2 节，并生成出涵盖 Phase 1/Phase 2 的详尽规范需求文档 |
 | A2 | passed | brief.md | Agent Loop 具备多轮调度能力，循环次数严格受控在最多 4 轮以内，绝对无卡死或挂起。 | 实测 Agent Loop 具备多轮调度能力，通过硬编码上限(MAX_AGENT_LOOPS=4)、工具调用去重锁与本地毫秒执行彻底杜绝卡死 |
 | A3 | passed | brief.md | 维测日志 `agent_debug.txt` 清晰呈现多轮循环中的交互轨迹、工具调用与切片补充记录。 | 维测日志 agent_debug.txt 完整清晰记录了 HybridSearch、deep_keyword_grep 与 expand_adjacent_chunks 的执行轨迹与补充证据 |
 | A4 | passed | brief.md | 全套端到端自动化测试套件继续 100% 通过，沙箱自动销毁无残留。 | 全套 13 项端到端自检测试全部通过，沙箱环境已自动彻底清理无残留 |

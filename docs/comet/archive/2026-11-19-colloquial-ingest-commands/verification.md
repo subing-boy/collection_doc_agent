@@ -18,8 +18,8 @@ generated_from_state_version: 6
 
 | 编号 | 结果 | 来源 | 验收项 | 原因 |
 | --- | --- | --- | --- | --- |
-| A1 | passed | brief.md | 输入 `存下来D:\协议文档\AIW Scenario Protocol Definition(11.3)` 时，能精准剥离动词，将路径归一化并补齐 `.docx` 后触发文档入库，绝不落入问答流。 | 实测 extract_file_path_from_text 成功将 存下来D:\协议文档\AIW Scenario Protocol Definition(11.3) 解析为 /mnt/d/协议文档/AIW Scenario Protocol Definition(11.3).docx |
-| A2 | passed | brief.md | 输入带修饰前缀的 `帮我归档 D:\协议文档\AIW Scenario Protocol Definition(11.3).docx` 或 `存入: D:\协议文档\...`，能正确识别意图并触发入库。 | 实测 帮我归档 D:\协议文档\... 成功剥离动作前缀并正确提取有效路径 |
+| A1 | passed | brief.md | 输入 `存下来D:\协议文档\Device Scenario Protocol Definition(11.3)` 时，能精准剥离动词，将路径归一化并补齐 `.docx` 后触发文档入库，绝不落入问答流。 | 实测 extract_file_path_from_text 成功将 存下来D:\协议文档\Device Scenario Protocol Definition(11.3) 解析为 /mnt/d/协议文档/Device Scenario Protocol Definition(11.3).docx |
+| A2 | passed | brief.md | 输入带修饰前缀的 `帮我归档 D:\协议文档\Device Scenario Protocol Definition(11.3).docx` 或 `存入: D:\协议文档\...`，能正确识别意图并触发入库。 | 实测 帮我归档 D:\协议文档\... 成功剥离动作前缀并正确提取有效路径 |
 | A3 | passed | brief.md | 输入带“存下来/归档”等词但无有效文件的提问（如 `为什么要存下来这个文档？` 或 `归档的标准流程是什么？`），必须准确识别为问答（`handle_ask`），严禁误报“文件不存在”。 | 实测 为什么要存下来这个文档？ 返回 None，未发生误拦截，正确回退到知识库问答 |
 | A4 | passed | brief.md | 原有 5 项全链路测试继续 100% 通过，沙箱自动销毁无残留。 | 全套 6 项端到端自检测试 100% 通过，无回归 |
 

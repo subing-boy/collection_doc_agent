@@ -78,7 +78,7 @@ def resolve_input_file_path(raw_path: str) -> Optional[Path]:
 
 def extract_file_path_from_text(raw_text: str) -> Optional[Path]:
     """
-    从自然语言混合输入（如 '存下来D:\\协议文档\\AIW' 或 '帮我把 D:\\xx.docx 归档'）中
+    从自然语言混合输入（如 '存下来D:\\文档资料\\系统架构规范' 或 '帮我把 D:\\xx.docx 归档'）中
     使用高精度正则表达式剥离提取潜在文件路径，并在磁盘上进行真实实体校验。
     
     提取规则（耗时 < 1ms，纯本地无 LLM 消耗）：
