@@ -151,29 +151,48 @@ class AgentCore:
 
         # ----------------------------------------------------------------------
         # 象限 2: 同名但内容 Hash 变动 (就地版本迭代更新)
-        # 象限 4: 全新文件 (异名且异Hash)
+        # 象限 4: 全新文件 (异名且异Hash) 或 双因子语义版本迭代更新
         # ----------------------------------------------------------------------
         is_version_update = bool(existing_by_name and existing_by_name.get("file_hash") != file_hash)
-        target_doc_id = existing_by_name["doc_id"] if is_version_update else None
+        matched_old_doc = existing_by_name if is_version_update else None
 
-        # 1. 选择解析器并执行切片 (若为就地版本更新，复用原 doc_id 保持身份连续)
+        # 1. 选择解析器并执行切片
         parser = get_parser_for_file(path)
-        parsed_doc = parser.parse(path, doc_id=target_doc_id)
+        parsed_doc = parser.parse(path)
+
+        # 2. 若未命中同名更新，启动【双因子语义版本决策引擎】(跨格式、跨版本尾缀自动归纳)
+        if not is_version_update:
+            semantic_match = self._find_semantic_version_match(filename, parsed_doc.full_text_preview)
+            if semantic_match:
+                is_version_update = True
+                matched_old_doc = semantic_match
+
+        target_doc_id = matched_old_doc["doc_id"] if is_version_update else parsed_doc.doc_id
+        parsed_doc.doc_id = target_doc_id
+        for chunk in parsed_doc.chunks:
+            chunk.doc_id = target_doc_id
 
         # 若为就地版本更新：首先清除该文档在 SQLite 和内存向量索引中的全部旧切片
         if is_version_update:
-            self.vector_store.delete_doc_chunks(parsed_doc.doc_id)
+            self.vector_store.delete_doc_chunks(target_doc_id)
 
-        # 2. 智能分类与物理文件搬运归档
+        # 3. 智能分类与物理文件搬运归档 (Word 统一按 .md 落地，版本更新时 overwrite=True)
         archive_info = self.classifier.classify_and_archive(
             source_file=path,
             parsed_doc=parsed_doc,
-            storage_base_dir=self.storage_dir
+            storage_base_dir=self.storage_dir,
+            overwrite=is_version_update
         )
 
-        # 3. 保存或更新文档主表元数据 (注入 file_hash 指纹)
+        # 若就地更新且旧存储文件路径发生变化（如从 .docx 升级为 .md），彻底清理旧物理文件
+        if is_version_update and matched_old_doc:
+            old_stored = Path(matched_old_doc.get("stored_path", ""))
+            if old_stored.exists() and str(old_stored) != archive_info["stored_path"]:
+                old_stored.unlink(missing_ok=True)
+
+        # 4. 保存或更新文档主表元数据 (注入 file_hash 指纹)
         self.metadata_db.save_document(
-            doc_id=parsed_doc.doc_id,
+            doc_id=target_doc_id,
             original_filename=parsed_doc.filename,
             category=archive_info["category"],
             stored_path=archive_info["stored_path"],
@@ -183,19 +202,21 @@ class AgentCore:
             file_hash=file_hash
         )
 
-        # 4. 批量计算新切片向量并存入向量引擎
+        # 5. 批量计算新切片向量并存入向量引擎
         chunks_data = [chunk.to_dict() for chunk in parsed_doc.chunks]
         self.vector_store.add_chunks(chunks_data)
 
         status_str = "updated_version" if is_version_update else "success"
-        message_str = (
-            f"检测到文档【{filename}】存在内容更新，已自动刷新知识切片与向量索引至最新版本！"
-            if is_version_update else "文档已成功完成全新分类归档！"
-        )
+        if is_version_update and matched_old_doc and matched_old_doc.get("original_filename") != filename:
+            message_str = f"检测到文档【{filename}】为已有文档【{matched_old_doc['original_filename']}】的迭代升级版本，已自动就地升级切片至最新版本！"
+        elif is_version_update:
+            message_str = f"检测到文档【{filename}】存在内容更新，已自动刷新知识切片与向量索引至最新版本！"
+        else:
+            message_str = "文档已成功完成全新分类归档！"
 
         return {
             "status": status_str,
-            "doc_id": parsed_doc.doc_id,
+            "doc_id": target_doc_id,
             "filename": parsed_doc.filename,
             "category": archive_info["category"],
             "stored_path": archive_info["stored_path"],
@@ -204,6 +225,70 @@ class AgentCore:
             "chunks_count": len(parsed_doc.chunks),
             "message": message_str
         }
+
+    @staticmethod
+    def canonicalize_title(filename: str) -> str:
+        """
+        提取文件名的主干核心名称，去除后缀与末尾的版本号、日期、阶段标识
+        支持全角/半角括号: (v1.0), （11.26）, (2.1.3, 11.26), _v1.0, -20261126 等
+        """
+        stem = Path(filename).stem
+        # 1. 剥离末尾括号内的版本、日期、纯数字组合
+        stem = re.sub(r'[\(（\[【][^\)）\]】]*?(?:\d+|v\d+|初版|终审|修订|draft|final)[^\)）\]】]*?[\)）\]】]\s*$', '', stem, flags=re.I)
+        # 2. 剥离末尾的下划线/中划线版本号与日期 (如 _v1.0, -20261126, _11.26)
+        stem = re.sub(r'[-_ ]+(?:v?\d+(?:\.\d+)*|\d{4}[-_.]?\d{2}[-_.]?\d{2}|\d{1,2}\.\d{1,2})$', '', stem, flags=re.I)
+        # 3. 符号清洗与空白折叠
+        clean = re.sub(r'[-_ ]+', ' ', stem).strip()
+        return clean.lower()
+
+    def _find_semantic_version_match(self, filename: str, preview_text: str) -> Optional[Dict[str, Any]]:
+        """
+        双因子语义版本匹配:
+        因子 1: 标题主干归一化匹配 (忽略版本尾缀与后缀格式差异)
+        因子 2: 文档级指纹向量余弦相似度比对 (>= 0.65 判定为同源迭代)
+        """
+        new_canonical = self.canonicalize_title(filename)
+        if not new_canonical or len(new_canonical) < 2:
+            return None
+
+        all_docs = self.metadata_db.list_documents()
+        if not all_docs:
+            return None
+
+        new_fingerprint = f"{new_canonical} {preview_text[:500]}"
+        new_vec = self.embedding.embed_text(new_fingerprint)
+
+        best_match = None
+        highest_sim = 0.0
+
+        for doc in all_docs:
+            old_name = doc.get("original_filename", "")
+            if old_name == filename:
+                continue
+
+            old_canonical = self.canonicalize_title(old_name)
+            # 因子 1: 主干名相同，或主干存在强包含关系
+            canonical_match = (new_canonical == old_canonical) or (
+                len(new_canonical) > 4 and len(old_canonical) > 4 and 
+                (new_canonical in old_canonical or old_canonical in new_canonical)
+            )
+
+            # 因子 2: 计算文档指纹相似度
+            old_fingerprint = f"{old_canonical} {doc.get('summary', '')}"
+            old_vec = self.embedding.embed_text(old_fingerprint)
+            sim = BaseEmbeddingProvider.cosine_similarity(new_vec, old_vec)
+
+            # 双因子判定门槛: 主干完全一致时相似度 >= 0.40，主干包含时相似度 >= 0.75
+            threshold = 0.40 if (new_canonical == old_canonical) else 0.75
+
+            if not canonical_match:
+                continue
+
+            if sim >= threshold and sim > highest_sim:
+                highest_sim = sim
+                best_match = doc
+
+        return best_match
 
     # ==========================================================================
     # 二、带严格出处的知识溯源问答 (Sourced RAG Q&A)

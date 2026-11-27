@@ -32,14 +32,17 @@ class DocumentClassifier:
         self,
         source_file: Path,
         parsed_doc: ParsedDocument,
-        storage_base_dir: Optional[Path] = None
+        storage_base_dir: Optional[Path] = None,
+        overwrite: bool = False
     ) -> Dict[str, Any]:
         """
-        对已解析的文档进行智能归类，并将源文件安全归档至对应分类子目录下
-        
+        对已解析的文档进行智能归档，物理存储落盘并返回分类元数据
+        【规范】所有 Word (.docx) 文档在此阶段统一转录为纯净 Markdown (.md) 保存落盘
+
         :param source_file: 原始上传/导入的文件路径
         :param parsed_doc: 解析器生成的 ParsedDocument 对象
         :param storage_base_dir: 存储根目录，默认使用 config.STORAGE_DIR
+        :param overwrite: 是否就地覆盖同名或同源目标文件 (版本迭代更新时为 True)
         :return: 包含 category, tags, summary, stored_path 的字典
         """
         source_file = Path(source_file).resolve()
@@ -56,19 +59,34 @@ class DocumentClassifier:
         category_dir = base_dir / category
         category_dir.mkdir(parents=True, exist_ok=True)
 
-        target_file_path = category_dir / source_file.name
+        # 3. 物理落盘存储 (若为 .docx，统一以 .md 纯文本格式落地)
+        if source_file.suffix.lower() == ".docx":
+            from parsers.docx_parser import DOCXParser
+            md_filename = f"{source_file.stem}.md"
+            target_file_path = category_dir / md_filename
 
-        # 3. 物理复制/迁移文件 (如果目标已存在同名文件，添加时间戳避免覆盖)
-        if target_file_path.exists() and target_file_path != source_file:
-            stem = source_file.stem
-            suffix = source_file.suffix
-            from datetime import datetime
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            target_file_path = category_dir / f"{stem}_{timestamp}{suffix}"
+            if not overwrite and target_file_path.exists() and target_file_path != source_file:
+                from datetime import datetime
+                timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+                target_file_path = category_dir / f"{source_file.stem}_{timestamp}.md"
 
-        # 执行文件拷贝保存
-        if target_file_path != source_file:
-            shutil.copy2(str(source_file), str(target_file_path))
+            docx_parser = DOCXParser()
+            md_content = docx_parser.to_markdown(source_file)
+            target_file_path.write_text(md_content, encoding="utf-8")
+        else:
+            target_file_path = category_dir / source_file.name
+
+            # 物理复制文件 (如果目标已存在同名文件且非就地覆盖更新，添加时间戳避免覆盖)
+            if not overwrite and target_file_path.exists() and target_file_path != source_file:
+                stem = source_file.stem
+                suffix = source_file.suffix
+                from datetime import datetime
+                timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+                target_file_path = category_dir / f"{stem}_{timestamp}{suffix}"
+
+            # 执行文件拷贝保存
+            if target_file_path != source_file:
+                shutil.copy2(str(source_file), str(target_file_path))
 
         return {
             "category": category,

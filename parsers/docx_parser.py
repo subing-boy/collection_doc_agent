@@ -152,3 +152,40 @@ class DOCXParser(BaseParser):
             lines.append("| " + " | ".join(row) + " |")
 
         return "\n".join(lines)
+
+    def to_markdown(self, file_path: Path) -> str:
+        """
+        将 Word (.docx) 文档转录为结构化、纯净的 Markdown 文本
+        保留 Heading 1/2/3 标题层级 (#, ##, ###) 和 Markdown 表格
+        """
+        file_path = Path(file_path).resolve()
+        if not file_path.is_file():
+            raise FileNotFoundError(f"未找到指定的 DOCX 文件: {file_path}")
+
+        doc = docx.Document(str(file_path))
+        lines: List[str] = []
+
+        # 遍历正文段落
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if not text:
+                continue
+
+            style_name = para.style.name.lower() if para.style else ""
+            if "heading 1" in style_name or "title" in style_name:
+                lines.append(f"\n# {text}\n")
+            elif "heading 2" in style_name:
+                lines.append(f"\n## {text}\n")
+            elif "heading 3" in style_name:
+                lines.append(f"\n### {text}\n")
+            else:
+                lines.append(text)
+
+        # 转换附表为 Markdown 表格
+        if doc.tables:
+            for t_idx, table in enumerate(doc.tables, start=1):
+                table_md = self._parse_docx_table(table)
+                if table_md:
+                    lines.append(f"\n### 附表 {t_idx}\n\n{table_md}\n")
+
+        return "\n\n".join(lines).strip()

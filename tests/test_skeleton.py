@@ -510,8 +510,61 @@ def run_all_tests():
         assert check_unsupported_format_tip("笔记.txt") is None
         print("  ✔ 全部 6 大支持格式 (.docx/.pptx/.xlsx/.msg/.md/.txt) 正常放行")
 
+        # --- 测试项 17: Word 文档统一按 Markdown 存储与双因子语义版本归纳就地更新测试 ---
+        print("\n[测试 17/17] 执行 Word 转 Markdown 存储与双因子语义版本归纳就地更新测试...")
+
+        # 1. 动态生成测试用 DOCX 文件 (带版本号 1.0)
+        v1_docx_path = sandbox_temp / "通信协议规范(1.0).docx"
+        v1_doc = docx.Document()
+        v1_doc.add_heading("通信协议规范总览", level=1)
+        v1_doc.add_paragraph("本规范定义了通信通道的连接建立与心跳维持流程。")
+        v1_doc.add_heading("MTU分包配置", level=2)
+        v1_doc.add_paragraph("默认分包大小配置为 512 字节。")
+        v1_table = v1_doc.add_table(rows=2, cols=2)
+        v1_table.rows[0].cells[0].text = "字段"
+        v1_table.rows[0].cells[1].text = "说明"
+        v1_table.rows[1].cells[0].text = "CID"
+        v1_table.rows[1].cells[1].text = "通道标识符"
+        v1_doc.save(str(v1_docx_path))
+
+        # 2. 存入 DOCX，验证落盘为 .md 文件
+        v1_report = agent.ingest_document(v1_docx_path)
+        assert v1_report["status"] == "success"
+        stored_v1_path = Path(v1_report["stored_path"])
+        assert stored_v1_path.suffix.lower() == ".md"
+        assert stored_v1_path.exists()
+        md_text = stored_v1_path.read_text(encoding="utf-8")
+        assert "# 通信协议规范总览" in md_text
+        assert "附表" in md_text
+        print(f"  ✔ Word 文档自动转录为纯净 Markdown 落地: {stored_v1_path.name}")
+
+        # 3. 动态生成同源新版本 Markdown 文档 (带不同版本尾缀与日期，如 2.0，11.26)
+        v2_md_path = sandbox_temp / "通信协议规范（2.0，11.26）.md"
+        v2_md_path.write_text("""# 通信协议规范总览
+本规范定义了通信通道升级版的连接建立与心跳维持流程。
+
+## MTU分包配置
+在 2.0 版本中，默认分包大小优化为 1024 字节。
+
+## 附表 1
+| 字段 | 说明 |
+| --- | --- |
+| CID | 通道标识符 |
+| Flags | 扩展控制标志 |
+""", encoding="utf-8")
+
+        # 4. 存入新版本，验证触发双因子语义版本迭代 (updated_version) 且 doc_id 一致
+        v2_report = agent.ingest_document(v2_md_path)
+        assert v2_report["status"] == "updated_version"
+        assert v2_report["doc_id"] == v1_report["doc_id"]
+        stored_v2_path = Path(v2_report["stored_path"])
+        assert stored_v2_path.exists()
+        # 验证旧版本物理文件已被清理
+        assert not stored_v1_path.exists() or stored_v1_path == stored_v2_path
+        print(f"  ✔ 跨格式、跨版本日期文件精准触发双因子版本归纳就地更新: {v2_report['message']}")
+
         print("\n" + "=" * 65)
-        print("🎉 恭喜！全部 16 项端到端自检测试均 100% 通过！")
+        print("🎉 恭喜！全部 17 项端到端自检测试均 100% 通过！")
         print("=" * 65)
 
     finally:
